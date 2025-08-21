@@ -153,7 +153,7 @@ class TestTSMOM:
         pnl, weights, signal_grid, volatility = system.run_from_prices(self.prices)
 
         # Signals should be generated at grid points (multiples of L)
-        grid_points = np.arange(0, len(self.prices), L)
+        np.arange(0, len(self.prices), L)
         non_zero_signals = signal_grid[signal_grid != 0]
 
         # Should have some signals generated
@@ -171,7 +171,7 @@ class TestTSMOM:
         # Create simple trending data for easier verification
         L, M = 3, 2
         trend_returns = np.array([0.0, 0.01, 0.01, 0.01, -0.01, -0.01, -0.01, 0.02, 0.02])
-        trend_prices = 100 * np.cumprod(1 + trend_returns)
+        100 * np.cumprod(1 + trend_returns)
 
         cfg = TSMOMConfig(L=L, M=M, span_sigma=2, sigma_target_annual=0.1)
         system = TSMOM(cfg)

@@ -6,9 +6,9 @@ This script runs the full test suite with different configurations
 and provides detailed reporting on test coverage and performance.
 """
 
-import sys
-import subprocess
 import argparse
+import subprocess
+import sys
 import time
 
 

@@ -29,7 +29,7 @@ try:
     )
 
     TFUNIFY_AVAILABLE = True
-except (ImportError, AttributeError) as e:
+except (ImportError, AttributeError):
     TFUNIFY_AVAILABLE = False
     EuropeanTF = None
     EuropeanTFConfig = None

@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+
 import numpy as np
 from numpy.typing import NDArray
+
 from .core import (
-    span_to_nu,
     ewma_volatility_from_returns,
-    vol_normalised_returns,
     pct_returns_from_prices,
+    span_to_nu,
+    vol_normalised_returns,
 )
 
 FloatArray = NDArray[np.floating]

@@ -3,16 +3,13 @@ import pytest
 import tempfile
 import csv
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from tfunify.european import EuropeanTF, EuropeanTFConfig
 from tfunify.american import AmericanTF, AmericanTFConfig
 from tfunify.tsmom import TSMOM, TSMOMConfig
 from tfunify.core import (
     pct_returns_from_prices,
-    ewma_volatility_from_returns,
-    vol_normalised_returns,
-    volatility_target_weights,
 )
 
 
@@ -133,7 +130,7 @@ class TestCrossSystemIntegration:
 
         # All systems should produce valid metrics
         assert len(metrics) == 3
-        for name, metric in metrics.items():
+        for _name, metric in metrics.items():
             assert np.isfinite(metric["annual_return"])
             assert np.isfinite(metric["annual_vol"])
             assert np.isfinite(metric["sharpe"])
@@ -372,7 +369,7 @@ class TestCrossSystemIntegration:
         cfg = EuropeanTFConfig()
         system = EuropeanTF(cfg)
 
-        for scenario_name, test_prices in stress_scenarios:
+        for _scenario_name, test_prices in stress_scenarios:
             try:
                 pnl, weights, signal, volatility = system.run_from_prices(test_prices)
 
@@ -507,7 +504,7 @@ class TestRealWorldScenarios:
             ("TSMOM", TSMOM(TSMOMConfig(sigma_target_annual=0.05))),
         ]
 
-        for name, system in systems:
+        for _name, system in systems:
             pnl, *_ = system.run_from_prices(prices)
 
             # Should produce valid results even in low vol
@@ -582,7 +579,7 @@ class TestDataPipelineIntegration:
             # All systems should produce results
             assert len(results) == 3
 
-            for name, pnl in results.items():
+            for _name, pnl in results.items():
                 assert len(pnl) == len(data["close"])
                 valid_pnl = pnl[~np.isnan(pnl)]
                 assert len(valid_pnl) > len(data["close"]) * 0.5  # At least 50% valid

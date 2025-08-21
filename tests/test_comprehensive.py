@@ -3,13 +3,9 @@ import pytest
 from tfunify.core import (
     span_to_nu,
     ewma,
-    ewma_variance_preserving,
     long_short_variance_preserving,
     pct_returns_from_prices,
-    ewma_volatility_from_returns,
-    vol_normalised_returns,
     volatility_target_weights,
-    volatility_weighted_turnover,
 )
 from tfunify.european import EuropeanTF, EuropeanTFConfig
 from tfunify.american import AmericanTF, AmericanTFConfig

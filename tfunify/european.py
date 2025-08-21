@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 import numpy as np
 from numpy.typing import NDArray
+
 from .core import (
-    span_to_nu,
+    ewma_variance_preserving,
     ewma_volatility_from_returns,
+    long_short_variance_preserving,
+    pct_returns_from_prices,
+    span_to_nu,
     vol_normalised_returns,
     volatility_target_weights,
-    pct_returns_from_prices,
-    ewma_variance_preserving,
-    long_short_variance_preserving,
 )
 
 FloatArray = NDArray[np.floating]

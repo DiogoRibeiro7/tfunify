@@ -32,7 +32,7 @@ try:
     )
 
     TFUNIFY_AVAILABLE = True
-except ImportError as e:
+except ImportError:
     TFUNIFY_AVAILABLE = False
     print(f"Error: tfunify package required for optimization examples.")
     print(f"Install with: pip install tfunify")
@@ -184,7 +184,7 @@ def optimize_european_tf_grid(
                 best_score = score
                 best_params = params.copy()
 
-        except Exception as e:
+        except Exception:
             # Skip invalid parameter combinations
             continue
 
@@ -261,7 +261,7 @@ def optimize_american_tf_random(
                 best_score = score
                 best_params = params.copy()
 
-        except Exception as e:
+        except Exception:
             # Skip invalid parameter combinations
             continue
 

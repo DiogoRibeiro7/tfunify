@@ -9,6 +9,7 @@ This package provides three main trend-following systems:
 All systems include comprehensive input validation and are optimized for performance.
 """
 
+from .american import AmericanTF, AmericanTFConfig
 from .core import (
     ewma,
     ewma_variance_preserving,
@@ -20,7 +21,6 @@ from .core import (
     volatility_target_weights,
     volatility_weighted_turnover,
 )
-from .american import AmericanTF, AmericanTFConfig
 from .european import EuropeanTF, EuropeanTFConfig
 from .tsmom import TSMOM, TSMOMConfig
 

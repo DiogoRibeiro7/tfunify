@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 import numpy as np
 from numpy.typing import NDArray
-from .core import span_to_nu, ewma_variance_preserving
+
+from .core import ewma_variance_preserving, span_to_nu
 
 FloatArray = NDArray[np.floating]
 

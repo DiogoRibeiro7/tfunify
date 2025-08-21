@@ -29,7 +29,7 @@ try:
     )
 
     TFUNIFY_AVAILABLE = True
-except ImportError as e:
+except ImportError:
     TFUNIFY_AVAILABLE = False
     print(f"Error: tfunify package required for performance comparison.")
     print(f"Install with: pip install tfunify")
@@ -339,7 +339,7 @@ def create_comparison_plots(results: Dict[str, Dict[str, PerformanceMetrics]]) -
     # Add text annotations
     for i in range(len(scenarios)):
         for j in range(len(systems)):
-            text = ax1.text(
+            ax1.text(
                 j,
                 i,
                 f'{metrics_data["sharpe_ratio"][i, j]:.2f}',

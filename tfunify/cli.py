@@ -3,15 +3,16 @@ from __future__ import annotations
 import argparse
 import sys
 from typing import TYPE_CHECKING
+
 import numpy as np
 from numpy.typing import NDArray
 
-from .european import EuropeanTF, EuropeanTFConfig
 from .american import AmericanTF, AmericanTFConfig
+from .european import EuropeanTF, EuropeanTFConfig
 from .tsmom import TSMOM, TSMOMConfig
 
 if TYPE_CHECKING:
-    import yfinance as yf
+    pass
 
 
 def _load_csv(path: str) -> dict[str, NDArray[np.floating]]:
@@ -46,7 +47,7 @@ def _load_csv(path: str) -> dict[str, NDArray[np.floating]]:
     cols: dict[str, list[float]] = {"close": [], "high": [], "low": []}
 
     try:
-        with open(path, "r", newline="") as f:
+        with open(path, newline="") as f:
             reader = csv.DictReader(f)
             if not reader.fieldnames or "close" not in reader.fieldnames:
                 raise ValueError("CSV must contain a 'close' column.")

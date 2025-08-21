@@ -259,7 +259,6 @@ class TestAmericanTF:
     def test_stop_loss_mechanism(self):
         """Test stop loss mechanism."""
         # Create data with a clear trend followed by reversal
-        n = 100
         trend_up = np.linspace(100, 120, 50)
         trend_down = np.linspace(120, 100, 50)
         close_prices = np.concatenate([trend_up, trend_down])
@@ -452,7 +451,6 @@ class TestAmericanTF:
     def test_long_vs_short_positions(self):
         """Test that system can take both long and short positions."""
         # Create data with both up and down trends
-        n = 200
         up_trend = np.linspace(100, 120, 100)
         down_trend = np.linspace(120, 100, 100)
         mixed_close = np.concatenate([up_trend, down_trend])

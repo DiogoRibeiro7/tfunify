@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Optional
+
 import numpy as np
 from numpy.typing import NDArray
 
@@ -15,7 +15,7 @@ def span_to_nu(span: int) -> float:
     return 1.0 - 2.0 / (span + 1.0)
 
 
-def ewma(x: FloatArray, nu: float, *, x0: Optional[float] = None) -> FloatArray:
+def ewma(x: FloatArray, nu: float, *, x0: float | None = None) -> FloatArray:
     """
     EWMA recursion y_t = (1-ν)x_t + ν y_{t-1}.
 

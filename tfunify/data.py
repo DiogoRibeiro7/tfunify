@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
-from typing import Literal, TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
 if TYPE_CHECKING:
-    import yfinance as yf
+    pass
 
 
 def download_csv(
@@ -104,7 +104,7 @@ def load_csv(path: str | Path) -> dict[str, np.ndarray]:
 
     data = {k: [] for k in ["open", "high", "low", "close", "volume"]}
 
-    with open(path, "r", newline="") as f:
+    with open(path, newline="") as f:
         reader = csv.DictReader(f)
         if not reader.fieldnames:
             raise ValueError("CSV file appears to be empty or malformed")
