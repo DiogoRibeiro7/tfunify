@@ -23,9 +23,7 @@ packages = [{ include = "tfunify" }]
 [tool.poetry.dependencies]
 python = ">=3.10,<3.13"
 numpy = "^2.0.0"
-
-[tool.poetry.extras]
-yahoo = ["yfinance>=0.2.40"]
+yfinance = { version = ">=0.2.40", extras = ["all"], optional = true }
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
