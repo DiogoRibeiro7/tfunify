@@ -166,7 +166,7 @@ class AmericanTF:
             nu_short = span_to_nu(self.cfg.span_short)
         except ValueError as e:
             if "nu must be in (0,1)" in str(e):
-                raise ValueError(f"Invalid span parameters: {e}")
+                raise ValueError(f"Invalid span parameters: {e}") from e
             raise
         
         s_long = ewma_variance_preserving(close, nu_long)
