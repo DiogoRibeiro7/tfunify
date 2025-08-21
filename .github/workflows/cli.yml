@@ -12,65 +12,85 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          
+          cache: 'pip'
+
       - name: Install Poetry
         uses: abatilo/actions-poetry@v3
         with:
           poetry-version: "1.8.3"
-          
-      - name: Configure Poetry
+
+      # (Optional) cache Poetry venvs and downloads
+      - name: Cache Poetry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pypoetry
+            ~/.local/share/pypoetry
+            ./.venv
+          key: poetry-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
+
+      - name: Configure Poetry + Install
         run: |
-          poetry env use ${{ matrix.python-version }}
-          poetry install --with dev
-          
+          set -e
+          poetry config virtualenvs.prefer-active-python true
+          poetry env use "$(python -c 'import sys; print(sys.executable)')"
+          poetry install --with dev --no-interaction --no-ansi
+
       - name: Lint with ruff
         run: |
           poetry run ruff check .
           poetry run ruff format --check .
-          
+
       - name: Type check with mypy
         run: poetry run mypy tfunify
-        
+
       - name: Run tests with pytest
         run: |
           poetry run pytest --cov=tfunify --cov-report=term-missing --cov-report=xml -v
-          
-      - name: Upload coverage to Codecov
+
+      - name: Upload coverage to Codecov (3.11 only)
+        if: matrix.python-version == '3.11' && hashFiles('coverage.xml') != ''
         uses: codecov/codecov-action@v4
-        if: matrix.python-version == '3.11'
         with:
           file: ./coverage.xml
           fail_ci_if_error: true
-          
+        env:
+          # For private repos, set this in Settings ▸ Secrets and variables ▸ Actions
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
   integration-test:
     runs-on: ubuntu-latest
     needs: test
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          
+          cache: 'pip'
+
       - name: Install Poetry
         uses: abatilo/actions-poetry@v3
         with:
           poetry-version: "1.8.3"
-          
-      - name: Install package
+
+      - name: Configure Poetry + Install
         run: |
-          poetry install
-          
+          set -e
+          poetry config virtualenvs.prefer-active-python true
+          poetry env use "$(python -c 'import sys; print(sys.executable)')"
+          poetry install --no-interaction --no-ansi
+
       - name: Test CLI functionality
         run: |
           # Create test data
@@ -86,11 +106,11 @@ jobs:
               for i, p in enumerate(prices):
                   writer.writerow([f'2023-{(i%12)+1:02d}-{(i%28)+1:02d}', f'{p:.2f}'])
           "
-          
+
           # Test CLI commands
           poetry run tfu european --csv test_data.csv --span-long 50 --span-short 10
           poetry run tfu american --csv test_data.csv --span-long 50 --span-short 10 --atr-period 20
           poetry run tfu tsmom --csv test_data.csv --L 5 --M 8
-          
+
           # Verify output files exist
           ls -la *_results.npz
