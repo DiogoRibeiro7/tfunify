@@ -12,11 +12,18 @@ Key features:
 - Risk-adjusted metrics comparison
 - Monte Carlo robustness testing
 """
-
+import sys
 import numpy as np
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
-from tfunify import EuropeanTF, EuropeanTFConfig, AmericanTF, AmericanTFConfig, TSMOM, TSMOMConfig
+from typing import Dict, Tuple
+try:
+    from tfunify import EuropeanTF, EuropeanTFConfig, AmericanTF, AmericanTFConfig, TSMOM, TSMOMConfig
+    TFUNIFY_AVAILABLE = True
+except ImportError as e:
+    TFUNIFY_AVAILABLE = False
+    print(f"Error: tfunify package required for performance comparison.")
+    print(f"Install with: pip install tfunify")
+    sys.exit(1)
 
 try:
     import matplotlib.pyplot as plt

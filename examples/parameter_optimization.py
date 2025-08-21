@@ -13,13 +13,21 @@ Key features:
 - Out-of-sample validation
 - Parameter sensitivity analysis
 """
-
+import sys
 import numpy as np
 import time
 from itertools import product
 from dataclasses import dataclass
-from typing import Dict, List, Tuple, Any, Optional
-from tfunify import EuropeanTF, EuropeanTFConfig, AmericanTF, AmericanTFConfig, TSMOM, TSMOMConfig
+from typing import Dict, List, Tuple, Any
+
+try:
+    from tfunify import EuropeanTF, EuropeanTFConfig, AmericanTF, AmericanTFConfig, TSMOM, TSMOMConfig
+    TFUNIFY_AVAILABLE = True
+except ImportError as e:
+    TFUNIFY_AVAILABLE = False
+    print(f"Error: tfunify package required for optimization examples.")
+    print(f"Install with: pip install tfunify")
+    sys.exit(1)
 
 try:
     import matplotlib.pyplot as plt

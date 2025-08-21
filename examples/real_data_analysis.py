@@ -10,28 +10,78 @@ Requirements:
 """
 
 import numpy as np
-import pandas as pd
 from datetime import datetime, timedelta
 from pathlib import Path
-from tfunify import EuropeanTF, EuropeanTFConfig, AmericanTF, AmericanTFConfig, TSMOM, TSMOMConfig
 
+# ===== CORE TFUNIFY IMPORTS =====
+try:
+    from tfunify import EuropeanTF, EuropeanTFConfig, AmericanTF, AmericanTFConfig, TSMOM, TSMOMConfig
+    TFUNIFY_AVAILABLE = True
+except ImportError as e:
+    TFUNIFY_AVAILABLE = False
+    print(f"Error: tfunify package required for this example.")
+    print(f"Install with: pip install tfunify")
+    print(f"Error details: {e}")
+
+# ===== OPTIONAL DEPENDENCIES =====
+
+# Yahoo Finance data integration
 try:
     from tfunify.data import download_csv, load_csv
-
     YAHOO_AVAILABLE = True
 except ImportError:
     YAHOO_AVAILABLE = False
     print("Warning: Yahoo Finance integration not available.")
     print("Install with: pip install tfunify[yahoo]")
 
+# Data handling
+try:
+    import pandas as pd
+    PANDAS_AVAILABLE = True
+except ImportError:
+    PANDAS_AVAILABLE = False
+    print("Warning: Pandas not available. Install with: pip install pandas")
+
+# Plotting support
 try:
     import matplotlib.pyplot as plt
     import matplotlib.dates as mdates
-
     PLOTTING_AVAILABLE = True
 except ImportError:
     PLOTTING_AVAILABLE = False
     print("Warning: Plotting not available. Install with: pip install matplotlib")
+
+
+def check_requirements():
+    """Check if all required dependencies are available."""
+    missing = []
+    
+    if not TFUNIFY_AVAILABLE:
+        missing.append("tfunify (core package)")
+    if not YAHOO_AVAILABLE:
+        missing.append("yfinance (for data download)")
+    if not PANDAS_AVAILABLE:
+        missing.append("pandas (for data handling)")
+    
+    optional_missing = []
+    if not PLOTTING_AVAILABLE:
+        optional_missing.append("matplotlib (for plots)")
+    
+    if missing:
+        print("Missing required dependencies:")
+        for dep in missing:
+            print(f"  - {dep}")
+        print("\nInstall missing dependencies:")
+        print("  pip install tfunify[yahoo] pandas")
+        return False
+    
+    if optional_missing:
+        print("Missing optional dependencies:")
+        for dep in optional_missing:
+            print(f"  - {dep}")
+        print("  Some features may not be available.")
+    
+    return True
 
 
 def download_market_data(symbol: str = "SPY", period: str = "5y") -> dict:
@@ -57,11 +107,22 @@ def download_market_data(symbol: str = "SPY", period: str = "5y") -> dict:
         data = load_csv(file_path)
 
         # Also load dates if we can
-        df = pd.read_csv(file_path)
-        data["dates"] = pd.to_datetime(df["date"])
+        if PANDAS_AVAILABLE:
+            df = pd.read_csv(file_path)
+            data["dates"] = pd.to_datetime(df["date"])
+        else:
+            # Fallback without pandas
+            import csv
+            from datetime import datetime
+            dates = []
+            with open(file_path, 'r') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    dates.append(datetime.strptime(row['date'], '%Y-%m-%d'))
+            data["dates"] = dates
 
         print(
-            f"Loaded {len(data['close'])} observations from {data['dates'].iloc[0].date()} to {data['dates'].iloc[-1].date()}"
+            f"Loaded {len(data['close'])} observations from {data['dates'][0]} to {data['dates'][-1]}"
         )
         return data
 
@@ -82,7 +143,10 @@ def analyze_data_quality(data: dict) -> None:
 
     # Basic statistics
     print(f"Observations: {len(close):,}")
-    print(f"Date range: {data['dates'].iloc[0].date()} to {data['dates'].iloc[-1].date()}")
+    if PANDAS_AVAILABLE and hasattr(data['dates'], 'iloc'):
+        print(f"Date range: {data['dates'].iloc[0].date()} to {data['dates'].iloc[-1].date()}")
+    else:
+        print(f"Date range: {data['dates'][0]} to {data['dates'][-1]}")
     print(f"Price range: ${np.min(close):.2f} - ${np.max(close):.2f}")
 
     # Check for missing data
@@ -324,7 +388,8 @@ def create_performance_plots(data: dict, results: dict) -> None:
     ax1.set_title("Price Chart")
     ax1.set_ylabel("Price ($)")
     ax1.grid(True, alpha=0.3)
-    ax1.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+    if hasattr(mdates, 'DateFormatter'):
+        ax1.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
 
     # 2. Cumulative P&L
     ax2 = axes[0, 1]
@@ -338,13 +403,17 @@ def create_performance_plots(data: dict, results: dict) -> None:
     ax2.set_ylabel("Cumulative P&L")
     ax2.legend()
     ax2.grid(True, alpha=0.3)
-    ax2.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+    if hasattr(mdates, 'DateFormatter'):
+        ax2.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
 
     # 3. European TF weights
     ax3 = axes[1, 0]
     eu_weights = results["european"]["weights"]
     valid_mask = ~np.isnan(eu_weights)
-    ax3.plot(dates[valid_mask], eu_weights[valid_mask], "b-", linewidth=1)
+    if hasattr(dates, '__getitem__'):
+        ax3.plot(np.array(dates)[valid_mask], eu_weights[valid_mask], "b-", linewidth=1)
+    else:
+        ax3.plot(range(len(eu_weights[valid_mask])), eu_weights[valid_mask], "b-", linewidth=1)
     ax3.set_title("European TF - Position Weights")
     ax3.set_ylabel("Weight")
     ax3.grid(True, alpha=0.3)
@@ -354,7 +423,10 @@ def create_performance_plots(data: dict, results: dict) -> None:
     ax4 = axes[1, 1]
     am_units = results["american"]["units"]
     valid_mask = ~np.isnan(am_units)
-    ax4.plot(dates[valid_mask], am_units[valid_mask], "r-", linewidth=1)
+    if hasattr(dates, '__getitem__'):
+        ax4.plot(np.array(dates)[valid_mask], am_units[valid_mask], "r-", linewidth=1)
+    else:
+        ax4.plot(range(len(am_units[valid_mask])), am_units[valid_mask], "r-", linewidth=1)
     ax4.set_title("American TF - Position Units")
     ax4.set_ylabel("Units")
     ax4.grid(True, alpha=0.3)
@@ -364,7 +436,10 @@ def create_performance_plots(data: dict, results: dict) -> None:
     ax5 = axes[2, 0]
     ts_signals = results["tsmom"]["signals"]
     valid_mask = ~np.isnan(ts_signals)
-    ax5.plot(dates[valid_mask], ts_signals[valid_mask], "g-", linewidth=1)
+    if hasattr(dates, '__getitem__'):
+        ax5.plot(np.array(dates)[valid_mask], ts_signals[valid_mask], "g-", linewidth=1)
+    else:
+        ax5.plot(range(len(ts_signals[valid_mask])), ts_signals[valid_mask], "g-", linewidth=1)
     ax5.set_title("TSMOM - Signal Grid")
     ax5.set_ylabel("Signal Strength")
     ax5.grid(True, alpha=0.3)
@@ -392,7 +467,10 @@ def create_performance_plots(data: dict, results: dict) -> None:
                         vol_ret = np.std(window_valid, ddof=0) * np.sqrt(252)
                         sharpe = mean_ret / vol_ret if vol_ret > 0 else 0
                         rolling_sharpe.append(sharpe)
-                        valid_dates.append(dates.iloc[i])
+                        if hasattr(dates, 'iloc'):
+                            valid_dates.append(dates.iloc[i])
+                        else:
+                            valid_dates.append(dates[i])
 
             if rolling_sharpe:
                 ax6.plot(valid_dates, rolling_sharpe, label=system_name.title(), linewidth=2)
@@ -402,7 +480,8 @@ def create_performance_plots(data: dict, results: dict) -> None:
     ax6.legend()
     ax6.grid(True, alpha=0.3)
     ax6.axhline(y=0, color="k", linestyle="--", alpha=0.5)
-    ax6.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+    if hasattr(mdates, 'DateFormatter'):
+        ax6.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
 
     # Format x-axes
     for ax in axes.flat:
@@ -435,7 +514,10 @@ def analyze_market_regimes(data: dict, results: dict) -> None:
     for i in range(window, len(prices)):
         ret = (prices[i] / prices[i - window] - 1) * 100
         rolling_returns.append(ret)
-        regime_dates.append(dates.iloc[i])
+        if hasattr(dates, 'iloc'):
+            regime_dates.append(dates.iloc[i])
+        else:
+            regime_dates.append(dates[i])
 
     rolling_returns = np.array(rolling_returns)
 
@@ -494,6 +576,11 @@ def main():
     print("This example analyzes trend-following systems using real market data")
     print("from Yahoo Finance.\n")
 
+    # Check dependencies first
+    if not check_requirements():
+        print("\nExample cannot run due to missing dependencies.")
+        return 1
+
     # Configuration
     SYMBOL = "SPY"  # S&P 500 ETF
     PERIOD = "5y"  # 5 years of data
@@ -529,7 +616,12 @@ def main():
         print("5. Risk-adjusted returns vary significantly by approach")
 
         print("\nAnalysis complete! Check 'examples/data/' for downloaded data")
-        print("and 'examples/real_data_analysis.png' for performance charts.")
+        if PLOTTING_AVAILABLE:
+            print("and 'examples/real_data_analysis.png' for performance charts.")
+        else:
+            print("Install matplotlib to generate performance charts.")
+
+        return 0
 
     except (ImportError, ValueError) as e:
         print(f"Error in analysis: {e}")
@@ -539,7 +631,9 @@ def main():
         print("2. Check your internet connection for data download")
         print("3. Try a different symbol or shorter period")
         print("   if data issues persist")
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    sys.exit(main())

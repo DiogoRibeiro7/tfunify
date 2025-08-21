@@ -6,13 +6,16 @@ This directory contains comprehensive examples demonstrating how to use tfunify 
 
 ### Installation
 
-```bash
-# Basic installation
-pip install tfunify
+For all examples:
 
-# With optional dependencies for examples
+```bash
+pip install tfunify matplotlib pandas scipy
+
+# Or with Yahoo Finance support:
 pip install tfunify[yahoo] matplotlib pandas scipy
 ```
+
+For individual examples, see the requirements listed at the top of each file.
 
 ### Running Examples
 

@@ -11,7 +11,7 @@ broader portfolio management strategies, including:
 - Portfolio overlay strategies
 - Risk management and position sizing
 """
-
+import sys
 import numpy as np
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional
@@ -19,20 +19,22 @@ from typing import Dict, List, Tuple, Optional
 # Attempt to import tfunify classes, handle missing attributes gracefully
 try:
     from tfunify import (
-        EuropeanTF,
-        EuropeanTFConfig,
-        AmericanTF,
-        AmericanTFConfig,
-        TSMOM,
-        TSMOMConfig,
+        EuropeanTF, EuropeanTFConfig,
+        AmericanTF, AmericanTFConfig, 
+        TSMOM, TSMOMConfig,
     )
-except (ImportError, AttributeError):
+    TFUNIFY_AVAILABLE = True
+except (ImportError, AttributeError) as e:
+    TFUNIFY_AVAILABLE = False
     EuropeanTF = None
     EuropeanTFConfig = None
     AmericanTF = None
     AmericanTFConfig = None
     TSMOM = None
     TSMOMConfig = None
+    print(f"Error: tfunify package required for portfolio integration.")
+    print(f"Install with: pip install tfunify")
+    sys.exit(1)
 
 try:
     import matplotlib.pyplot as plt
@@ -583,6 +585,12 @@ def main():
     print("TFUNIFY PORTFOLIO INTEGRATION EXAMPLE")
     print("Comprehensive portfolio strategies with trend-following integration")
     print("=" * 75)
+
+    # Check core dependencies first
+    if not TFUNIFY_AVAILABLE:
+        print("\nError: Cannot run without tfunify package.")
+        print("Install with: pip install tfunify")
+        return 1
 
     # Step 1: Generate multi-asset universe
     print("\nStep 1: Generating multi-asset universe...")

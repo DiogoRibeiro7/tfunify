@@ -4,11 +4,60 @@ Basic Usage Example for tfunify
 
 This example demonstrates the basic usage of all three trend-following systems
 with synthetic data. Perfect for getting started and understanding the API.
+
+Requirements:
+    pip install tfunify matplotlib
 """
 
 import numpy as np
-import matplotlib.pyplot as plt
-from tfunify import EuropeanTF, EuropeanTFConfig, AmericanTF, AmericanTFConfig, TSMOM, TSMOMConfig
+
+# ===== CORE TFUNIFY IMPORTS =====
+try:
+    from tfunify import EuropeanTF, EuropeanTFConfig, AmericanTF, AmericanTFConfig, TSMOM, TSMOMConfig
+    TFUNIFY_AVAILABLE = True
+except ImportError as e:
+    TFUNIFY_AVAILABLE = False
+    print(f"Error: tfunify package required for this example.")
+    print(f"Install with: pip install tfunify")
+    print(f"Error details: {e}")
+
+# ===== OPTIONAL DEPENDENCIES =====
+
+# Plotting support
+try:
+    import matplotlib.pyplot as plt
+    PLOTTING_AVAILABLE = True
+except ImportError:
+    PLOTTING_AVAILABLE = False
+    print("Warning: Plotting not available. Install with: pip install matplotlib")
+
+
+def check_requirements():
+    """Check if all required dependencies are available."""
+    missing = []
+    
+    if not TFUNIFY_AVAILABLE:
+        missing.append("tfunify (core package)")
+    
+    optional_missing = []
+    if not PLOTTING_AVAILABLE:
+        optional_missing.append("matplotlib (for plots)")
+    
+    if missing:
+        print("Missing required dependencies:")
+        for dep in missing:
+            print(f"  - {dep}")
+        print("\nInstall missing dependencies:")
+        print("  pip install tfunify")
+        return False
+    
+    if optional_missing:
+        print("Missing optional dependencies:")
+        for dep in optional_missing:
+            print(f"  - {dep}")
+        print("  Some features may not be available.")
+    
+    return True
 
 
 def generate_sample_data(n_days: int = 1000, seed: int = 42) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -200,6 +249,10 @@ def run_tsmom_example():
 
 def create_comparison_plot(eu_pnl, am_pnl, ts_pnl, prices):
     """Create a comparison plot of all three systems."""
+    if not PLOTTING_AVAILABLE:
+        print("Matplotlib not available. Install with: pip install matplotlib")
+        return
+    
     try:
         # Calculate cumulative P&L
         eu_cum = np.nancumsum(eu_pnl)
@@ -236,8 +289,8 @@ def create_comparison_plot(eu_pnl, am_pnl, ts_pnl, prices):
         
         print("Comparison plot saved as 'examples/basic_usage_comparison.png'")
         
-    except ImportError:
-        print("Matplotlib not available. Install with: pip install matplotlib")
+    except Exception as e:
+        print(f"Error creating plot: {e}")
 
 
 def main():
@@ -245,6 +298,11 @@ def main():
     print("TFUNIFY BASIC USAGE EXAMPLES")
     print("This example demonstrates all three trend-following systems")
     print("with synthetic data that includes trending behavior.\n")
+    
+    # Check dependencies first
+    if not check_requirements():
+        print("\nExample cannot run due to missing dependencies.")
+        return 1
     
     # Run all systems
     eu_pnl, eu_weights, eu_signal, prices = run_european_tf_example()
@@ -271,15 +329,18 @@ def main():
             print(f"{name:12s}: Return={annual_ret:6.2%}, Vol={annual_vol:6.2%}, Sharpe={sharpe:5.2f}")
     
     # Create comparison plot
-    print("\nCreating comparison plot...")
-    # Use the longest common length for comparison
-    min_len = min(len(eu_pnl), len(am_pnl), len(ts_pnl))
-    create_comparison_plot(
-        eu_pnl[:min_len], 
-        am_pnl[:min_len], 
-        ts_pnl[:min_len], 
-        prices[:min_len]
-    )
+    if PLOTTING_AVAILABLE:
+        print("\nCreating comparison plot...")
+        # Use the longest common length for comparison
+        min_len = min(len(eu_pnl), len(am_pnl), len(ts_pnl))
+        create_comparison_plot(
+            eu_pnl[:min_len], 
+            am_pnl[:min_len], 
+            ts_pnl[:min_len], 
+            prices[:min_len]
+        )
+    else:
+        print("\nSkipping plots (matplotlib not available)")
     
     print("\n" + "=" * 60)
     print("EXAMPLE COMPLETE")
@@ -290,7 +351,10 @@ def main():
     print("3. American TF uses breakouts with ATR-based stops")
     print("4. TSMOM uses block-averaged momentum signals")
     print("5. All systems can be easily configured and backtested")
+    
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    sys.exit(main())
