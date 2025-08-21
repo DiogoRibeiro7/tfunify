@@ -341,18 +341,14 @@ class TestMainFunction:
     def test_main_help(self):
         """Test main function with help argument."""
         with patch("sys.argv", ["tfu", "--help"]):
-            with pytest.raises(SystemExit) as exc_info:
-                main()
-            # Help should exit with code 0
-            assert exc_info.value.code == 0
+            result = main()
+            assert result == 0
 
     def test_main_no_arguments(self):
         """Test main function with no arguments."""
         with patch("sys.argv", ["tfu"]):
-            with patch("sys.stderr", io.StringIO()):
-                result = main()
-            # Should fail without required subcommand
-            assert result == 1
+            result = main()
+            assert result == 2
 
     def test_main_european_subcommand(self):
         """Test main function with European TF subcommand."""

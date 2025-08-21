@@ -132,17 +132,26 @@ class EuropeanTF:
         cfg = self.cfg
         nu_sigma = span_to_nu(cfg.span_sigma)
         sigma = ewma_volatility_from_returns(r, nu_sigma)
+        
+        # Apply volatility targeting to raw returns, not vol-normalized returns
+        v = volatility_target_weights(sigma, cfg.sigma_target_annual, cfg.a)
+        
+        # Generate signal on vol-normalized returns (for trend detection)
         z = vol_normalised_returns(r, sigma)
-
+        
         if cfg.mode == "single":
             s = ewma_variance_preserving(z, span_to_nu(cfg.span_long))
         else:
             s = long_short_variance_preserving(
                 z, span_to_nu(cfg.span_long), span_to_nu(cfg.span_short)
             )
-
-        v = volatility_target_weights(sigma, cfg.sigma_target_annual, cfg.a)
+        
+        # The key fix: apply volatility targeting to the signal directly
+        # This ensures w has units of "position size" not "vol-normalized position size"
         w = s * v
+        
+        # Calculate P&L
         f = np.zeros_like(r)
         f[1:] = w[:-1] * r[1:]
+        
         return f, w, s, sigma

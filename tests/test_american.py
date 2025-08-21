@@ -90,13 +90,14 @@ class TestTrueRange:
 
         tr = _true_range(high, low, close)
 
-        # Manual calculation
+        # Manual calculation (using correct previous close values)
         # t=0: max(105-100, |105-102|, |100-102|) = max(5, 3, 2) = 5
-        # t=1: max(108-103, |108-107|, |103-107|) = max(5, 1, 4) = 5
-        # t=2: max(107-104, |107-106|, |104-106|) = max(3, 1, 2) = 3
-        # t=3: max(110-106, |110-109|, |106-109|) = max(4, 1, 3) = 4
-        expected = np.array([5.0, 5.0, 3.0, 4.0])
+        # t=1: max(108-103, |108-102|, |103-102|) = max(5, 6, 1) = 6  (uses close[0]=102)
+        # t=2: max(107-104, |107-107|, |104-107|) = max(3, 0, 3) = 3  (uses close[1]=107)
+        # t=3: max(110-106, |110-106|, |106-106|) = max(4, 4, 0) = 4  (uses close[2]=106)
+        expected = np.array([5.0, 6.0, 3.0, 4.0])
         np.testing.assert_allclose(tr, expected)
+
 
     def test_true_range_with_gaps(self):
         """Test True Range with price gaps."""
@@ -106,10 +107,43 @@ class TestTrueRange:
 
         tr = _true_range(high, low, close)
 
+        # Correct manual calculation (using actual previous close values)
         # t=0: max(100-95, |100-98|, |95-98|) = max(5, 2, 3) = 5
-        # t=1: max(120-115, |120-118|, |115-118|) = max(5, 2, 3) = 5
-        # t=2: max(115-110, |115-113|, |110-113|) = max(5, 2, 3) = 5
+        # t=1: max(120-115, |120-98|, |115-98|) = max(5, 22, 17) = 22  (uses close[0]=98)
+        # t=2: max(115-110, |115-118|, |110-118|) = max(5, 3, 8) = 8   (uses close[1]=118)
+        expected = np.array([5.0, 22.0, 8.0])
+        np.testing.assert_allclose(tr, expected)
+
+
+    def test_true_range_small_gaps(self):
+        """Test True Range with smaller gaps where H-L dominates."""
+        high = np.array([105.0, 106.0, 107.0])
+        low = np.array([100.0, 101.0, 102.0])
+        close = np.array([103.0, 104.0, 105.0])
+
+        tr = _true_range(high, low, close)
+
+        # Manual calculation:
+        # t=0: max(105-100, |105-103|, |100-103|) = max(5, 2, 3) = 5
+        # t=1: max(106-101, |106-103|, |101-103|) = max(5, 3, 2) = 5
+        # t=2: max(107-102, |107-104|, |102-104|) = max(5, 3, 2) = 5
         expected = np.array([5.0, 5.0, 5.0])
+        np.testing.assert_allclose(tr, expected)
+
+
+    def test_true_range_gap_down(self):
+        """Test True Range with gap down scenario."""
+        high = np.array([110.0, 105.0, 108.0])
+        low = np.array([105.0, 95.0, 103.0])  # Gap down on day 2
+        close = np.array([108.0, 98.0, 106.0])
+
+        tr = _true_range(high, low, close)
+
+        # Manual calculation:
+        # t=0: max(110-105, |110-108|, |105-108|) = max(5, 2, 3) = 5
+        # t=1: max(105-95, |105-108|, |95-108|) = max(10, 3, 13) = 13  (gap down)
+        # t=2: max(108-103, |108-98|, |103-98|) = max(5, 10, 5) = 10
+        expected = np.array([5.0, 13.0, 10.0])
         np.testing.assert_allclose(tr, expected)
 
     def test_true_range_single_observation(self):

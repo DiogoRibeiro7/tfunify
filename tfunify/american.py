@@ -11,7 +11,29 @@ FloatArray = NDArray[np.floating]
 
 
 def _true_range(high: FloatArray, low: FloatArray, close: FloatArray) -> FloatArray:
-    """Calculate True Range: max(H-L, |H-C_prev|, |L-C_prev|)."""
+    """
+    Calculate the True Range (TR) for a series of high, low, and close prices.
+    The True Range is defined as the maximum of:
+        - The current high minus the current low,
+        - The absolute value of the current high minus the previous close,
+        - The absolute value of the current low minus the previous close.
+    Parameters
+    ----------
+    high : FloatArray
+        Array-like sequence of high prices.
+    low : FloatArray
+        Array-like sequence of low prices.
+    close : FloatArray
+        Array-like sequence of close prices.
+    Returns
+    -------
+    FloatArray
+        Array of true range values for each period.
+    Raises
+    ------
+    ValueError
+        If input arrays do not have the same shape or if any high price is less than the corresponding low price.
+    """
     high = np.asarray(high, dtype=float)
     low = np.asarray(low, dtype=float)
     close = np.asarray(close, dtype=float)
@@ -21,20 +43,11 @@ def _true_range(high: FloatArray, low: FloatArray, close: FloatArray) -> FloatAr
     if np.any(high < low):
         raise ValueError("high prices cannot be less than low prices")
 
-    n = len(close)
-    tr = np.zeros(n)
-
-    # First period: just H-L
-    tr[0] = high[0] - low[0]
-
-    # Subsequent periods: max(H-L, |H-C_prev|, |L-C_prev|)
-    for i in range(1, n):
-        hl = high[i] - low[i]
-        hc = abs(high[i] - close[i - 1])
-        lc = abs(low[i] - close[i - 1])
-        tr[i] = max(hl, hc, lc)
-
-    return tr
+    prev_close = np.concatenate([[close[0]], close[:-1]])
+    hl = high - low
+    hc = np.abs(high - prev_close)
+    lc = np.abs(low - prev_close)
+    return np.maximum(hl, np.maximum(hc, lc))
 
 
 def _atr(high: FloatArray, low: FloatArray, close: FloatArray, period: int) -> FloatArray:
@@ -159,20 +172,12 @@ class AmericanTF:
                 raise ValueError("high, low, and close must have same shape")
 
         atr_vals = _atr(high, low, close, self.cfg.atr_period)
-
-        # Handle extreme span values that might cause issues
-        try:
-            nu_long = span_to_nu(self.cfg.span_long)
-            nu_short = span_to_nu(self.cfg.span_short)
-        except ValueError as e:
-            if "nu must be in (0,1)" in str(e):
-                raise ValueError(f"Invalid span parameters: {e}") from e
-            raise
-
+        nu_long = span_to_nu(self.cfg.span_long)
+        nu_short = span_to_nu(self.cfg.span_short)
         s_long = ewma_variance_preserving(close, nu_long)
         s_fast = ewma_variance_preserving(close, nu_short)
 
-        # Rest of the method remains the same...
+        # Rest of implementation...
         n = close.size
         units = np.zeros(n)
         pnl = np.zeros(n)

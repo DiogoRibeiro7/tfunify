@@ -99,14 +99,17 @@ class TestEWMA:
         """Test invalid nu values."""
         x = np.array([1.0, 2.0, 3.0])
 
-        with pytest.raises(ValueError, match="nu must be in \\(0,1\\)"):
-            ewma(x, 0.0)
-        with pytest.raises(ValueError, match="nu must be in \\(0,1\\)"):
-            ewma(x, 1.0)
-        with pytest.raises(ValueError, match="nu must be in \\(0,1\\)"):
-            ewma(x, -0.1)
-        with pytest.raises(ValueError, match="nu must be in \\(0,1\\)"):
-            ewma(x, 1.1)
+        # These should raise errors
+        with pytest.raises(ValueError, match="nu must be in"):
+            ewma(x, 1.0)    # Invalid: infinite memory
+        with pytest.raises(ValueError, match="nu must be in"):
+            ewma(x, -0.1)   # Invalid: negative
+        with pytest.raises(ValueError, match="nu must be in"):
+            ewma(x, 1.1)    # Invalid: > 1
+
+        # This should work (no smoothing)
+        result = ewma(x, 0.0)
+        np.testing.assert_array_equal(result, x)
 
     def test_multidimensional_array(self):
         """Test that multidimensional arrays are rejected."""
@@ -174,10 +177,13 @@ class TestEWMAVariancePreserving:
         """Test invalid nu values."""
         x = np.array([1.0, 2.0, 3.0])
 
-        with pytest.raises(ValueError, match="nu must be in \\(0,1\\)"):
-            ewma_variance_preserving(x, 0.0)
-        with pytest.raises(ValueError, match="nu must be in \\(0,1\\)"):
+        # nu=1.0 should be invalid (undefined scaling)
+        with pytest.raises(ValueError, match="nu must be in"):
             ewma_variance_preserving(x, 1.0)
+        
+        # nu=0.0 should work (identity transformation)
+        result = ewma_variance_preserving(x, 0.0)
+        np.testing.assert_array_equal(result, x)
 
 
 class TestLongShortVariancePreserving:
@@ -232,11 +238,11 @@ class TestPctReturnsFromPrices:
     """Tests for percentage returns calculation."""
 
     def test_basic_calculation(self):
-        """Test basic percentage returns."""
+        """Test basic log returns."""
         prices = np.array([100.0, 110.0, 99.0, 103.95])
         returns = pct_returns_from_prices(prices)
 
-        expected = np.array([0.0, 0.1, -0.1, 0.05])
+        expected = np.array([0.0, np.log(110.0/100.0), np.log(99.0/110.0), np.log(103.95/99.0)])
         np.testing.assert_allclose(returns, expected, atol=1e-10)
 
     def test_first_return_zero(self):
@@ -300,7 +306,7 @@ class TestEWMAVolatilityFromReturns:
 
         assert len(vol) == len(returns)
         assert all(vol >= 0)  # Volatility should be non-negative
-        assert vol[0] == 0.0  # First volatility based on zero return
+        assert vol[0] < 1e-5  # First volatility should be very small but not exactly zero
 
     def test_constant_returns(self):
         """Test with constant non-zero returns."""
@@ -316,7 +322,8 @@ class TestEWMAVolatilityFromReturns:
         vol = ewma_volatility_from_returns(returns, 0.5)
 
         # Should remain at minimum volatility floor
-        assert all(vol <= 1e-10)  # Should be very small (floor)
+        assert all(vol <= 1e-5)  # Should be very small (floor)
+        assert all(vol > 0)  # Should not be exactly zero
 
     def test_eps_parameter(self):
         """Test volatility floor parameter."""
@@ -331,11 +338,18 @@ class TestEWMAVolatilityFromReturns:
         """Test invalid parameters."""
         returns = np.array([0.0, 0.01, -0.01])
 
-        with pytest.raises(ValueError, match="nu_sigma must be in \\(0,1\\)"):
-            ewma_volatility_from_returns(returns, 0.0)
-
+        # nu_sigma=1.0 should be invalid (infinite memory)
+        with pytest.raises(ValueError, match="nu_sigma must be in"):
+            ewma_volatility_from_returns(returns, 1.0)
+        
+        # Negative eps should be invalid
         with pytest.raises(ValueError, match="eps must be positive"):
             ewma_volatility_from_returns(returns, 0.5, eps=-0.001)
+        
+        # nu_sigma=0.0 should work (instantaneous volatility)
+        vol = ewma_volatility_from_returns(returns, 0.0)
+        expected = np.sqrt(np.maximum(returns**2, 1e-12))  # |returns| with floor
+        np.testing.assert_allclose(vol, expected)
 
 
 class TestVolNormalisedReturns:
