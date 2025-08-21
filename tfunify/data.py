@@ -49,7 +49,7 @@ def download_csv(
     ...
     """
     try:
-        import yfinance as yf
+        import yfinance as yf # type: ignore[import-not-found]
     except ImportError as e:
         raise ImportError(
             "yfinance is required for tfunify.data. " "Install with `pip install tfunify[yahoo]`."
@@ -102,7 +102,7 @@ def load_csv(path: str | Path) -> dict[str, np.ndarray]:
     if not path.exists():
         raise FileNotFoundError(f"CSV file not found: {path}")
 
-    data = {k: [] for k in ["open", "high", "low", "close", "volume"]}
+    data: dict[str, list[float]] = {k: [] for k in ["open", "high", "low", "close", "volume"]}
 
     with open(path, newline="") as f:
         reader = csv.DictReader(f)
