@@ -187,17 +187,25 @@ poetry run pre-commit install
 
 ## Theory Background
 
+This implementation is based on the unified framework presented in:
+
+**Sepp, A. & Lucic, V. (2025). "The Science and Practice of Trend-following Systems." 17th June, 2025.**
+
+The paper provides theoretical foundations for classifying trend-following systems into three categories:
+
 ### European TF
 
-Based on variance-preserving exponentially weighted moving averages that maintain proper signal variance characteristics. The volatility targeting ensures consistent risk-adjusted exposure across different market regimes.
+Based on variance-preserving exponentially weighted moving averages applied to volatility-normalized returns. The paper derives an exact relationship between the system's P&L and the autocorrelation function of the underlying return process, showing that TF systems are profitable when returns exhibit positive long-term autocorrelation, even with short-term mean reversion. The volatility targeting ensures consistent risk-adjusted exposure across market regimes.
 
 ### American TF
 
-Implements classic breakout methodology with Average True Range (ATR) for adaptive thresholds. The trailing stop mechanism provides systematic risk management while allowing trends to develop.
+Implements classic breakout methodology with Average True Range (ATR) for adaptive thresholds. This system uses fast/slow moving average crossovers with ATR-based buffers for entry signals and trailing stops for systematic risk management. The approach allows trends to develop while providing downside protection.
 
-### TSMOM
+### TSMOM (Time Series Momentum)
 
-Follows the time series momentum framework from academic literature, using block-averaged momentum signals with proper volatility normalization for robust trend detection.
+Follows the time series momentum framework using block-averaged momentum signals. The system divides the return series into blocks, calculates the sign of cumulative returns within each block, and averages across multiple historical blocks. Volatility normalization ensures robust trend detection across different market conditions.
+
+The theoretical framework shows that TF systems benefit from the square of the drift in the return process and provides performance attribution to trend, mean reversion, and long-term drift components. The paper also demonstrates the defensive profile of TF systems and their diversification benefits when combined with long-only portfolios.
 
 ## License
 
@@ -214,7 +222,7 @@ Contributions welcome! Please ensure:
 
 ## Citation
 
-If you use this library in academic work, please cite:
+If you use this library in academic work, please cite both the software and the foundational paper:
 
 ```bibtex
 @software{tfunify2025,
@@ -222,5 +230,15 @@ If you use this library in academic work, please cite:
   title = {tfunify: Unified Trend-Following Systems},
   year = {2025},
   url = {https://github.com/diogoribeiro7/tfunify}
+}
+
+@article{sepp2025trend,
+  author = {Sepp, A. and Lucic, V.},
+  title = {The Science and Practice of Trend-following Systems},
+  year = {2025},
+  month = {June},
+  day = {17},
+  abstract = {We present a unified approach to the design of trend-following (TF) systems and their classification into European, American, and Time Series Momentum systems...},
+  keywords = {Trend-following Strategies, Managed Futures, Fractional Processes, Autocorrelation, Portfolio Diversification}
 }
 ```
