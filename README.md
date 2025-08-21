@@ -1,13 +1,17 @@
 # tfunify
 
-[![CI](https://github.com/diogoribeiro7/tfunify/workflows/CI/badge.svg)](https://github.com/diogoribeiro7/tfunify/actions) [![PyPI version](https://badge.fury.io/py/tfunify.svg)](https://badge.fury.io/py/tfunify) [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![CI](https://github.com/diogoribeiro7/tfunify/workflows/CI/badge.svg)](https://github.com/diogoribeiro7/tfunify/actions)
+[![PyPI version](https://badge.fury.io/py/tfunify.svg)](https://badge.fury.io/py/tfunify)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-Unified trend-following systems implemented in pure NumPy with comprehensive validation and testing.
+Unified trend-following systems implemented in pure NumPy with comprehensive validation and testing. This implementation follows the theoretical framework presented in Sepp & Lucic (2025) "The Science and Practice of Trend-following Systems".
 
 ## Systems
 
+Following the classification framework of Sepp & Lucic (2025), this library implements three distinct trend-following approaches:
+
 - **European TF**: Variance-preserving EWMA on volatility-normalised returns with volatility targeting
-- **American TF**: Fast/slow price filters with ATR buffers and trailing stops
+- **American TF**: Fast/slow price filters with ATR buffers and trailing stops  
 - **TSMOM**: Time Series Momentum using block-averaged signs of cumulative vol-normalised returns
 
 ## Installation
@@ -134,21 +138,18 @@ date,open,high,low,close,volume
 ## System Details
 
 ### European TF
-
 - Applies exponentially weighted moving averages to volatility-normalized returns
-- Supports single trend filter or long-short configuration
+- Supports single trend filter or long-short configuration  
 - Includes volatility targeting for consistent risk exposure
 - Variance-preserving EWMA ensures proper signal scaling
 
 ### American TF
-
 - Uses fast/slow moving average crossovers with ATR-based buffers
 - Implements trailing stops for risk management
 - Position sizing based on ATR and risk multiples
 - Handles entry/exit logic with state machine
 
 ### TSMOM
-
 - Divides time series into blocks of length L
 - Calculates momentum signal from M historical blocks
 - Uses sign of average returns within each block
@@ -157,7 +158,6 @@ date,open,high,low,close,volume
 ## Performance Considerations
 
 All systems are implemented in pure NumPy for performance:
-
 - Vectorized operations where possible
 - Minimal Python loops (only where state is required)
 - Memory-efficient array operations
@@ -194,29 +194,25 @@ This implementation is based on the unified framework presented in:
 The paper provides theoretical foundations for classifying trend-following systems into three categories:
 
 ### European TF
-
 Based on variance-preserving exponentially weighted moving averages applied to volatility-normalized returns. The paper derives an exact relationship between the system's P&L and the autocorrelation function of the underlying return process, showing that TF systems are profitable when returns exhibit positive long-term autocorrelation, even with short-term mean reversion. The volatility targeting ensures consistent risk-adjusted exposure across market regimes.
 
-### American TF
-
+### American TF  
 Implements classic breakout methodology with Average True Range (ATR) for adaptive thresholds. This system uses fast/slow moving average crossovers with ATR-based buffers for entry signals and trailing stops for systematic risk management. The approach allows trends to develop while providing downside protection.
 
 ### TSMOM (Time Series Momentum)
-
 Follows the time series momentum framework using block-averaged momentum signals. The system divides the return series into blocks, calculates the sign of cumulative returns within each block, and averages across multiple historical blocks. Volatility normalization ensures robust trend detection across different market conditions.
 
 The theoretical framework shows that TF systems benefit from the square of the drift in the return process and provides performance attribution to trend, mean reversion, and long-term drift components. The paper also demonstrates the defensive profile of TF systems and their diversification benefits when combined with long-only portfolios.
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Contributing
 
 Contributions welcome! Please ensure:
-
 - Tests pass (`pytest`)
-- Type checking passes (`mypy`)
+- Type checking passes (`mypy`) 
 - Code is formatted (`ruff format`)
 - Pre-commit hooks pass
 
