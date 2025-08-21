@@ -228,7 +228,7 @@ def _download_csv_yahoo(ticker: str, out_path: str, period: str, interval: str) 
         If no data is returned
     """
     try:
-        import yfinance as yf  # type: ignore[import-not-found]
+        import yfinance as yf  # type: ignore
     except Exception:
         print("The 'download' command requires the optional 'yahoo' extra.")
         print("Install with: pip install tfunify[yahoo]")

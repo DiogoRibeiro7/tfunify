@@ -49,7 +49,7 @@ def download_csv(
     ...
     """
     try:
-        import yfinance as yf  # type: ignore[import-not-found]
+        import yfinance as yf  # type: ignore
     except ImportError as e:
         raise ImportError(
             "yfinance is required for tfunify.data. " "Install with `pip install tfunify[yahoo]`."
