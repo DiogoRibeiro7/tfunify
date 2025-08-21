@@ -11,6 +11,7 @@ broader portfolio management strategies, including:
 - Portfolio overlay strategies
 - Risk management and position sizing
 """
+
 import sys
 import numpy as np
 from dataclasses import dataclass
@@ -19,10 +20,14 @@ from typing import Dict, List, Tuple, Optional
 # Attempt to import tfunify classes, handle missing attributes gracefully
 try:
     from tfunify import (
-        EuropeanTF, EuropeanTFConfig,
-        AmericanTF, AmericanTFConfig, 
-        TSMOM, TSMOMConfig,
+        EuropeanTF,
+        EuropeanTFConfig,
+        AmericanTF,
+        AmericanTFConfig,
+        TSMOM,
+        TSMOMConfig,
     )
+
     TFUNIFY_AVAILABLE = True
 except (ImportError, AttributeError) as e:
     TFUNIFY_AVAILABLE = False

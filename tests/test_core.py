@@ -58,7 +58,7 @@ class TestEWMA:
         x = np.array([1.0, 2.0, 3.0, 4.0])
         nu = 0.5
         result = ewma(x, nu)
-        
+
         # Manual calculation
         expected = np.array([1.0, 1.5, 2.25, 3.125])
         np.testing.assert_allclose(result, expected)
@@ -69,7 +69,7 @@ class TestEWMA:
         nu = 0.6
         x0 = 5.0
         result = ewma(x, nu, x0=x0)
-        
+
         # First value should be x0
         assert result[0] == x0
         # Second value: (1-nu)*x[1] + nu*x0
@@ -79,11 +79,11 @@ class TestEWMA:
     def test_extreme_nu_values(self):
         """Test with extreme but valid nu values."""
         x = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        
+
         # Very small nu (almost no smoothing)
         result_small = ewma(x, 0.001)
         np.testing.assert_allclose(result_small, x, atol=0.01)
-        
+
         # Large nu (heavy smoothing)
         result_large = ewma(x, 0.999)
         # Should be very close to first value
@@ -98,7 +98,7 @@ class TestEWMA:
     def test_invalid_nu_values(self):
         """Test invalid nu values."""
         x = np.array([1.0, 2.0, 3.0])
-        
+
         with pytest.raises(ValueError, match="nu must be in \\(0,1\\)"):
             ewma(x, 0.0)
         with pytest.raises(ValueError, match="nu must be in \\(0,1\\)"):
@@ -119,7 +119,7 @@ class TestEWMA:
         x_nan = np.array([1.0, np.nan, 3.0])
         x_inf = np.array([1.0, np.inf, 3.0])
         x_ninf = np.array([1.0, -np.inf, 3.0])
-        
+
         with pytest.raises(ValueError, match="Input contains non-finite values"):
             ewma(x_nan, 0.5)
         with pytest.raises(ValueError, match="Input contains non-finite values"):
@@ -132,7 +132,7 @@ class TestEWMA:
         x = np.full(100, 5.0)  # Constant series
         nu = 0.3
         result = ewma(x, nu)
-        
+
         # Should converge to the constant value
         np.testing.assert_allclose(result[-10:], 5.0, atol=1e-10)
 
@@ -144,14 +144,14 @@ class TestEWMAVariancePreserving:
         """Test that scaling factor is correct."""
         x = np.array([1.0, -1.0, 1.0, -1.0])
         nu = 0.5
-        
+
         regular_ewma = ewma(x, nu)
         var_preserving = ewma_variance_preserving(x, nu)
-        
+
         # Should be scaled by sqrt((1+nu)/(1-nu))
         expected_scale = math.sqrt((1 + nu) / (1 - nu))
         expected = expected_scale * regular_ewma
-        
+
         np.testing.assert_allclose(var_preserving, expected)
 
     def test_variance_preservation(self):
@@ -159,21 +159,21 @@ class TestEWMAVariancePreserving:
         np.random.seed(42)
         x = np.random.randn(1000)
         nu = 0.1  # Small nu for better preservation
-        
+
         original_var = np.var(x)
         var_preserving = ewma_variance_preserving(x, nu)
         ewma_var = np.var(var_preserving)
-        
+
         # Should be closer to original variance than regular EWMA
         regular_ewma = ewma(x, nu)
         regular_var = np.var(regular_ewma)
-        
+
         assert abs(ewma_var - original_var) < abs(regular_var - original_var)
 
     def test_invalid_nu(self):
         """Test invalid nu values."""
         x = np.array([1.0, 2.0, 3.0])
-        
+
         with pytest.raises(ValueError, match="nu must be in \\(0,1\\)"):
             ewma_variance_preserving(x, 0.0)
         with pytest.raises(ValueError, match="nu must be in \\(0,1\\)"):
@@ -186,19 +186,19 @@ class TestLongShortVariancePreserving:
     def test_parameter_validation(self):
         """Test parameter validation."""
         x = np.array([1.0, 2.0, 3.0, 4.0])
-        
+
         # Valid case
         result = long_short_variance_preserving(x, 0.8, 0.3)
         assert len(result) == len(x)
-        
+
         # Invalid: nu_short >= nu_long
         with pytest.raises(ValueError, match="Require 0 < nu_short < nu_long < 1"):
             long_short_variance_preserving(x, 0.3, 0.8)
-        
+
         # Invalid: nu_short = nu_long
         with pytest.raises(ValueError, match="Require 0 < nu_short < nu_long < 1"):
             long_short_variance_preserving(x, 0.5, 0.5)
-        
+
         # Invalid: nu values out of bounds
         with pytest.raises(ValueError, match="Require 0 < nu_short < nu_long < 1"):
             long_short_variance_preserving(x, 1.1, 0.5)
@@ -208,13 +208,13 @@ class TestLongShortVariancePreserving:
         x = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
         nu_long = 0.7
         nu_short = 0.3
-        
+
         result = long_short_variance_preserving(x, nu_long, nu_short)
-        
+
         # Should be difference of appropriately scaled variance-preserving EMAs
         long_ewma = ewma_variance_preserving(x, nu_long)
         short_ewma = ewma_variance_preserving(x, nu_short)
-        
+
         # Calculate loadings
         q = math.sqrt(
             1.0 / (1.0 - nu_long * nu_long)
@@ -223,7 +223,7 @@ class TestLongShortVariancePreserving:
         )
         ltilde1 = q / math.sqrt(1.0 - nu_long * nu_long)
         ltilde2 = q / math.sqrt(1.0 - nu_short * nu_short)
-        
+
         expected = ltilde1 * long_ewma - ltilde2 * short_ewma
         np.testing.assert_allclose(result, expected)
 
@@ -235,7 +235,7 @@ class TestPctReturnsFromPrices:
         """Test basic percentage returns."""
         prices = np.array([100.0, 110.0, 99.0, 103.95])
         returns = pct_returns_from_prices(prices)
-        
+
         expected = np.array([0.0, 0.1, -0.1, 0.05])
         np.testing.assert_allclose(returns, expected, atol=1e-10)
 
@@ -282,7 +282,7 @@ class TestPctReturnsFromPrices:
         """Test non-finite prices."""
         prices_nan = np.array([100.0, np.nan, 110.0])
         prices_inf = np.array([100.0, np.inf, 110.0])
-        
+
         with pytest.raises(ValueError, match="prices contain non-finite values"):
             pct_returns_from_prices(prices_nan)
         with pytest.raises(ValueError, match="prices contain non-finite values"):
@@ -297,7 +297,7 @@ class TestEWMAVolatilityFromReturns:
         returns = np.array([0.0, 0.1, -0.05, 0.02, -0.03])
         nu_sigma = 0.5
         vol = ewma_volatility_from_returns(returns, nu_sigma)
-        
+
         assert len(vol) == len(returns)
         assert all(vol >= 0)  # Volatility should be non-negative
         assert vol[0] == 0.0  # First volatility based on zero return
@@ -306,7 +306,7 @@ class TestEWMAVolatilityFromReturns:
         """Test with constant non-zero returns."""
         returns = np.full(10, 0.01)
         vol = ewma_volatility_from_returns(returns, 0.3)
-        
+
         # Should converge to the absolute value of the constant return
         np.testing.assert_allclose(vol[-3:], 0.01, atol=1e-3)
 
@@ -314,7 +314,7 @@ class TestEWMAVolatilityFromReturns:
         """Test with all zero returns."""
         returns = np.zeros(10)
         vol = ewma_volatility_from_returns(returns, 0.5)
-        
+
         # Should remain at minimum volatility floor
         assert all(vol <= 1e-10)  # Should be very small (floor)
 
@@ -323,17 +323,17 @@ class TestEWMAVolatilityFromReturns:
         returns = np.zeros(5)
         eps = 0.001
         vol = ewma_volatility_from_returns(returns, 0.5, eps=eps)
-        
+
         # All volatilities should be at least eps
         assert all(vol >= eps)
 
     def test_invalid_parameters(self):
         """Test invalid parameters."""
         returns = np.array([0.0, 0.01, -0.01])
-        
+
         with pytest.raises(ValueError, match="nu_sigma must be in \\(0,1\\)"):
             ewma_volatility_from_returns(returns, 0.0)
-        
+
         with pytest.raises(ValueError, match="eps must be positive"):
             ewma_volatility_from_returns(returns, 0.5, eps=-0.001)
 
@@ -345,23 +345,23 @@ class TestVolNormalisedReturns:
         """Test basic vol normalization."""
         returns = np.array([0.0, 0.02, -0.01, 0.015])
         sigma = np.array([0.01, 0.02, 0.015, 0.018])
-        
+
         z = vol_normalised_returns(returns, sigma)
-        
+
         # First element should be zero
         assert z[0] == 0.0
-        
+
         # Subsequent elements should be returns[t] / sigma[t-1]
-        expected = np.array([0.0, 0.02/0.01, -0.01/0.02, 0.015/0.015])
+        expected = np.array([0.0, 0.02 / 0.01, -0.01 / 0.02, 0.015 / 0.015])
         np.testing.assert_allclose(z, expected)
 
     def test_zero_volatility(self):
         """Test with zero volatility."""
         returns = np.array([0.0, 0.01, 0.02])
         sigma = np.array([0.01, 0.0, 0.015])  # Second vol is zero
-        
+
         z = vol_normalised_returns(returns, sigma)
-        
+
         # Should handle division by zero gracefully
         assert z[0] == 0.0
         assert z[2] == 0.0  # Should be set to 0 when vol is 0
@@ -370,7 +370,7 @@ class TestVolNormalisedReturns:
         """Test mismatched array shapes."""
         returns = np.array([0.0, 0.01, 0.02])
         sigma = np.array([0.01, 0.02])  # Different length
-        
+
         with pytest.raises(ValueError, match="r and sigma must have same shape"):
             vol_normalised_returns(returns, sigma)
 
@@ -383,9 +383,9 @@ class TestVolatilityTargetWeights:
         sigma = np.array([0.01, 0.02, 0.015])
         sigma_target = 0.12
         a = 252
-        
+
         weights = volatility_target_weights(sigma, sigma_target, a)
-        
+
         # Should be sigma_target / (sqrt(a) * sigma)
         expected = sigma_target / (math.sqrt(a) * sigma)
         np.testing.assert_allclose(weights, expected)
@@ -394,17 +394,17 @@ class TestVolatilityTargetWeights:
         """Test with very small volatility."""
         sigma = np.array([1e-15, 0.02])  # Very small vol
         weights = volatility_target_weights(sigma, 0.1, 252)
-        
+
         # Should not result in infinite weights due to floor
         assert all(np.isfinite(weights))
 
     def test_invalid_parameters(self):
         """Test invalid parameters."""
         sigma = np.array([0.01, 0.02])
-        
+
         with pytest.raises(ValueError, match="sigma_target_annual must be positive"):
             volatility_target_weights(sigma, -0.1, 252)
-        
+
         with pytest.raises(ValueError, match="a must be positive"):
             volatility_target_weights(sigma, 0.1, -252)
 
@@ -417,12 +417,12 @@ class TestVolatilityWeightedTurnover:
         weights = np.array([0.0, 0.5, 0.3, 0.8])
         sigma = np.array([0.01, 0.02, 0.015, 0.025])
         a = 252
-        
+
         turnover = volatility_weighted_turnover(weights, sigma, a)
-        
+
         # First turnover should be 0
         assert turnover[0] == 0.0
-        
+
         # Check calculation for subsequent values
         dw = np.abs(np.diff(weights))
         expected = math.sqrt(a) * sigma[1:] * dw
@@ -432,9 +432,9 @@ class TestVolatilityWeightedTurnover:
         """Test with constant weights."""
         weights = np.full(5, 0.5)
         sigma = np.array([0.01, 0.02, 0.015, 0.02, 0.018])
-        
+
         turnover = volatility_weighted_turnover(weights, sigma, 252)
-        
+
         # All turnovers except first should be 0
         assert turnover[0] == 0.0
         np.testing.assert_allclose(turnover[1:], 0.0)
@@ -443,7 +443,7 @@ class TestVolatilityWeightedTurnover:
         """Test mismatched shapes."""
         weights = np.array([0.0, 0.5, 0.3])
         sigma = np.array([0.01, 0.02])  # Different length
-        
+
         with pytest.raises(ValueError, match="w and sigma must have same shape"):
             volatility_weighted_turnover(weights, sigma, 252)
 
@@ -451,6 +451,6 @@ class TestVolatilityWeightedTurnover:
         """Test invalid a parameter."""
         weights = np.array([0.0, 0.5])
         sigma = np.array([0.01, 0.02])
-        
+
         with pytest.raises(ValueError, match="a must be positive"):
             volatility_weighted_turnover(weights, sigma, -252)

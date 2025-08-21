@@ -3,7 +3,7 @@ tfunify: Unified trend-following systems in pure NumPy.
 
 This package provides three main trend-following systems:
 - European TF: Variance-preserving EWMA with volatility targeting
-- American TF: Breakout system with ATR buffers and trailing stops  
+- American TF: Breakout system with ATR buffers and trailing stops
 - TSMOM: Time series momentum with block-averaged signals
 
 All systems include comprehensive input validation and are optimized for performance.
@@ -42,7 +42,7 @@ __all__ = [
     # Trading systems
     "EuropeanTF",
     "EuropeanTFConfig",
-    "AmericanTF", 
+    "AmericanTF",
     "AmericanTFConfig",
     "TSMOM",
     "TSMOMConfig",

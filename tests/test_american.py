@@ -21,7 +21,7 @@ class TestAmericanTFConfig:
         # Valid spans
         AmericanTFConfig(span_long=100, span_short=20)
         AmericanTFConfig(span_long=2, span_short=1)
-        
+
         # Invalid spans - negative or zero
         with pytest.raises(ValueError, match="span_long must be >= 1"):
             AmericanTFConfig(span_long=0)
@@ -29,7 +29,7 @@ class TestAmericanTFConfig:
             AmericanTFConfig(span_short=0)
         with pytest.raises(ValueError, match="span_long must be >= 1"):
             AmericanTFConfig(span_long=-10)
-        
+
         # Invalid span relationship
         with pytest.raises(ValueError, match="span_short must be less than span_long"):
             AmericanTFConfig(span_long=20, span_short=30)
@@ -41,7 +41,7 @@ class TestAmericanTFConfig:
         # Valid periods
         AmericanTFConfig(atr_period=1)
         AmericanTFConfig(atr_period=100)
-        
+
         # Invalid periods
         with pytest.raises(ValueError, match="atr_period must be >= 1"):
             AmericanTFConfig(atr_period=0)
@@ -53,13 +53,13 @@ class TestAmericanTFConfig:
         # Valid thresholds
         AmericanTFConfig(q=0.1, p=0.1)
         AmericanTFConfig(q=10.0, p=10.0)
-        
+
         # Invalid q
         with pytest.raises(ValueError, match="q must be positive"):
             AmericanTFConfig(q=0.0)
         with pytest.raises(ValueError, match="q must be positive"):
             AmericanTFConfig(q=-1.0)
-        
+
         # Invalid p
         with pytest.raises(ValueError, match="p must be positive"):
             AmericanTFConfig(p=0.0)
@@ -71,7 +71,7 @@ class TestAmericanTFConfig:
         # Valid values
         AmericanTFConfig(r_multiple=0.001)
         AmericanTFConfig(r_multiple=0.1)
-        
+
         # Invalid values
         with pytest.raises(ValueError, match="r_multiple must be positive"):
             AmericanTFConfig(r_multiple=0.0)
@@ -87,9 +87,9 @@ class TestTrueRange:
         high = np.array([105.0, 108.0, 107.0, 110.0])
         low = np.array([100.0, 103.0, 104.0, 106.0])
         close = np.array([102.0, 107.0, 106.0, 109.0])
-        
+
         tr = _true_range(high, low, close)
-        
+
         # Manual calculation
         # t=0: max(105-100, |105-102|, |100-102|) = max(5, 3, 2) = 5
         # t=1: max(108-103, |108-107|, |103-107|) = max(5, 1, 4) = 5
@@ -103,9 +103,9 @@ class TestTrueRange:
         high = np.array([100.0, 120.0, 115.0])  # Gap up
         low = np.array([95.0, 115.0, 110.0])
         close = np.array([98.0, 118.0, 113.0])
-        
+
         tr = _true_range(high, low, close)
-        
+
         # t=0: max(100-95, |100-98|, |95-98|) = max(5, 2, 3) = 5
         # t=1: max(120-115, |120-118|, |115-118|) = max(5, 2, 3) = 5
         # t=2: max(115-110, |115-113|, |110-113|) = max(5, 2, 3) = 5
@@ -117,9 +117,9 @@ class TestTrueRange:
         high = np.array([105.0])
         low = np.array([100.0])
         close = np.array([102.0])
-        
+
         tr = _true_range(high, low, close)
-        
+
         # Should be high - low = 5.0 for first observation
         assert tr[0] == 5.0
 
@@ -128,7 +128,7 @@ class TestTrueRange:
         high = np.array([105.0, 108.0])
         low = np.array([100.0, 103.0])
         close = np.array([102.0])  # Different length
-        
+
         with pytest.raises(ValueError, match="high, low, and close must have same shape"):
             _true_range(high, low, close)
 
@@ -137,7 +137,7 @@ class TestTrueRange:
         high = np.array([100.0, 105.0])
         low = np.array([105.0, 103.0])  # Low > High for first observation
         close = np.array([102.0, 104.0])
-        
+
         with pytest.raises(ValueError, match="high prices cannot be less than low prices"):
             _true_range(high, low, close)
 
@@ -151,13 +151,13 @@ class TestATR:
         low = np.array([100.0, 103.0, 104.0, 106.0, 108.0])
         close = np.array([102.0, 107.0, 106.0, 109.0, 111.0])
         period = 3
-        
+
         atr = _atr(high, low, close, period)
-        
+
         # First period-1 values should be NaN
         assert np.isnan(atr[0])
         assert np.isnan(atr[1])
-        
+
         # ATR[2] should be average of first 3 TRs
         tr = _true_range(high, low, close)
         expected_atr_2 = np.mean(tr[:3])
@@ -168,7 +168,7 @@ class TestATR:
         high = np.array([105.0, 108.0])
         low = np.array([100.0, 103.0])
         close = np.array([102.0, 107.0])
-        
+
         with pytest.raises(ValueError, match="ATR period must be >= 1"):
             _atr(high, low, close, 0)
 
@@ -180,20 +180,20 @@ class TestAmericanTF:
         """Set up test data before each test."""
         np.random.seed(42)
         self.n = 500
-        
+
         # Generate trending price series with realistic OHLC
         base_returns = 0.0005 + 0.015 * np.random.randn(self.n)
         # Add some momentum
         for i in range(1, self.n):
-            base_returns[i] += 0.08 * base_returns[i-1]
-        
+            base_returns[i] += 0.08 * base_returns[i - 1]
+
         self.close = 100 * np.cumprod(1 + np.r_[0.0, base_returns[1:]])
-        
+
         # Generate realistic high/low prices
         daily_range = 0.005 + 0.01 * np.abs(np.random.randn(self.n))
         self.high = self.close * (1 + daily_range * np.random.uniform(0.3, 1.0, self.n))
         self.low = self.close * (1 - daily_range * np.random.uniform(0.3, 1.0, self.n))
-        
+
         # Ensure OHLC consistency
         self.high = np.maximum(self.high, self.close)
         self.low = np.minimum(self.low, self.close)
@@ -201,20 +201,15 @@ class TestAmericanTF:
     def test_basic_functionality(self):
         """Test basic American TF functionality."""
         cfg = AmericanTFConfig(
-            span_long=50,
-            span_short=10,
-            atr_period=20,
-            q=2.0,
-            p=3.0,
-            r_multiple=0.01
+            span_long=50, span_short=10, atr_period=20, q=2.0, p=3.0, r_multiple=0.01
         )
         system = AmericanTF(cfg)
         pnl, units = system.run(self.close, self.high, self.low)
-        
+
         # Basic shape checks
         assert len(pnl) == len(self.close)
         assert len(units) == len(self.close)
-        
+
         # After warmup, values should be finite
         warmup = max(cfg.span_long, cfg.atr_period) + 10
         assert np.isfinite(pnl[warmup:]).all()
@@ -225,10 +220,10 @@ class TestAmericanTF:
         cfg = AmericanTFConfig(span_long=30, span_short=5, atr_period=15)
         system = AmericanTF(cfg)
         pnl, units = system.run(self.close)  # No high/low provided
-        
+
         assert len(pnl) == len(self.close)
         assert len(units) == len(self.close)
-        
+
         # Should produce valid results
         warmup = 40
         assert np.isfinite(pnl[warmup:]).all()
@@ -238,7 +233,7 @@ class TestAmericanTF:
         cfg = AmericanTFConfig(r_multiple=0.02, q=1.0)  # Easy entry conditions
         system = AmericanTF(cfg)
         pnl, units = system.run(self.close, self.high, self.low)
-        
+
         # When in position, units should follow r_multiple formula
         non_zero_units = units[units != 0]
         if len(non_zero_units) > 0:
@@ -252,11 +247,11 @@ class TestAmericanTF:
             span_long=20,
             span_short=5,
             q=0.5,  # Easy entry
-            p=2.0   # Stop loss
+            p=2.0,  # Stop loss
         )
         system = AmericanTF(cfg)
         pnl, units = system.run(self.close, self.high, self.low)
-        
+
         # Should have some position changes
         position_changes = np.sum(np.abs(np.diff(units)) > 1e-10)
         assert position_changes > 0  # Should enter/exit positions
@@ -270,28 +265,28 @@ class TestAmericanTF:
         close_prices = np.concatenate([trend_up, trend_down])
         high_prices = close_prices * 1.01
         low_prices = close_prices * 0.99
-        
+
         cfg = AmericanTFConfig(
             span_long=20,
             span_short=5,
             q=1.0,  # Easy entry
             p=2.0,  # Reasonable stop
-            atr_period=10
+            atr_period=10,
         )
         system = AmericanTF(cfg)
         pnl, units = system.run(close_prices, high_prices, low_prices)
-        
+
         # Should exit positions when trend reverses
         assert len(pnl) == len(close_prices)
 
     def test_different_parameter_combinations(self):
         """Test various parameter combinations."""
         param_sets = [
-            (10, 2, 5, 1.0, 1.5, 0.005),   # Fast system
-            (100, 20, 30, 3.0, 4.0, 0.02), # Slow system
+            (10, 2, 5, 1.0, 1.5, 0.005),  # Fast system
+            (100, 20, 30, 3.0, 4.0, 0.02),  # Slow system
             (50, 10, 15, 0.5, 0.8, 0.01),  # Sensitive system
         ]
-        
+
         for span_long, span_short, atr_period, q, p, r_mult in param_sets:
             cfg = AmericanTFConfig(
                 span_long=span_long,
@@ -299,11 +294,11 @@ class TestAmericanTF:
                 atr_period=atr_period,
                 q=q,
                 p=p,
-                r_multiple=r_mult
+                r_multiple=r_mult,
             )
             system = AmericanTF(cfg)
             pnl, units = system.run(self.close, self.high, self.low)
-            
+
             # All should produce valid results
             warmup = max(span_long, atr_period) + 10
             if warmup < len(pnl):
@@ -317,11 +312,11 @@ class TestAmericanTF:
         volatile_close = 100 * np.cumprod(1 + np.r_[0.0, volatile_returns[1:]])
         volatile_high = volatile_close * (1 + 0.02 * np.abs(np.random.randn(200)))
         volatile_low = volatile_close * (1 - 0.02 * np.abs(np.random.randn(200)))
-        
+
         cfg = AmericanTFConfig()
         system = AmericanTF(cfg)
         pnl, units = system.run(volatile_close, volatile_high, volatile_low)
-        
+
         # Should handle extreme volatility
         warmup = 50
         assert np.isfinite(pnl[warmup:]).all()
@@ -331,11 +326,11 @@ class TestAmericanTF:
         flat_close = np.full(100, 100.0) + 0.1 * np.random.randn(100)
         flat_high = flat_close + 0.5
         flat_low = flat_close - 0.5
-        
+
         cfg = AmericanTFConfig(q=2.0)  # Higher threshold for flat market
         system = AmericanTF(cfg)
         pnl, units = system.run(flat_close, flat_high, flat_low)
-        
+
         # Should produce minimal activity in flat market
         assert len(pnl) == len(flat_close)
         assert np.isfinite(pnl).all()
@@ -345,12 +340,12 @@ class TestAmericanTF:
         cfg = AmericanTFConfig()
         system = AmericanTF(cfg)
         pnl, units = system.run(self.close, self.high, self.low)
-        
+
         # Calculate manual P&L
         price_changes = np.diff(self.close)
         manual_pnl = np.zeros_like(pnl)
         manual_pnl[1:] = units[:-1] * price_changes
-        
+
         # Should match calculated P&L
         np.testing.assert_allclose(pnl, manual_pnl)
 
@@ -359,7 +354,7 @@ class TestAmericanTF:
         cfg = AmericanTFConfig(r_multiple=0.01)
         system = AmericanTF(cfg)
         pnl, units = system.run(self.close, self.high, self.low)
-        
+
         # Units should not be extremely large
         max_abs_units = np.max(np.abs(units))
         assert max_abs_units < 100  # Reasonable upper bound
@@ -368,7 +363,7 @@ class TestAmericanTF:
         """Test validation of empty inputs."""
         cfg = AmericanTFConfig()
         system = AmericanTF(cfg)
-        
+
         with pytest.raises(ValueError, match="Close prices cannot be empty"):
             system.run(np.array([]))
 
@@ -376,32 +371,33 @@ class TestAmericanTF:
         """Test validation of mismatched input shapes."""
         cfg = AmericanTFConfig()
         system = AmericanTF(cfg)
-        
+
         close = np.array([100.0, 110.0, 105.0])
         high = np.array([105.0, 115.0])  # Different length
         low = np.array([95.0, 105.0, 100.0])
-        
+
         with pytest.raises(ValueError, match="high, low, and close must have same shape"):
             system.run(close, high, low)
 
     def test_state_persistence(self):
         """Test that position state is maintained correctly."""
         # Create clear trending data
-        trend_close = np.array([100.0, 102.0, 104.0, 106.0, 108.0, 110.0,
-                               108.0, 106.0, 104.0, 102.0])  # Up then down
+        trend_close = np.array(
+            [100.0, 102.0, 104.0, 106.0, 108.0, 110.0, 108.0, 106.0, 104.0, 102.0]
+        )  # Up then down
         trend_high = trend_close + 1.0
         trend_low = trend_close - 1.0
-        
+
         cfg = AmericanTFConfig(
             span_long=4,
             span_short=2,
             q=0.5,  # Easy entry
             p=2.0,  # Stop loss
-            atr_period=3
+            atr_period=3,
         )
         system = AmericanTF(cfg)
         pnl, units = system.run(trend_close, trend_high, trend_low)
-        
+
         # Position should persist until exit conditions are met
         # Check that positions don't change randomly
         position_changes = np.where(np.abs(np.diff(units)) > 1e-10)[0]
@@ -414,11 +410,11 @@ class TestAmericanTF:
         short_close = self.close[:10]
         short_high = self.high[:10]
         short_low = self.low[:10]
-        
+
         cfg = AmericanTFConfig(atr_period=8)  # Long ATR period
         system = AmericanTF(cfg)
         pnl, units = system.run(short_close, short_high, short_low)
-        
+
         # Should handle gracefully when ATR is not available
         assert len(pnl) == len(short_close)
         assert len(units) == len(short_close)
@@ -429,11 +425,11 @@ class TestAmericanTF:
         stable_close = 100.0 + 1e-6 * np.random.randn(100)
         stable_high = stable_close + 1e-6
         stable_low = stable_close - 1e-6
-        
+
         cfg = AmericanTFConfig()
         system = AmericanTF(cfg)
         pnl, units = system.run(stable_close, stable_high, stable_low)
-        
+
         # Should handle small movements without numerical issues
         assert np.isfinite(pnl).all()
         assert np.isfinite(units).all()
@@ -444,10 +440,10 @@ class TestAmericanTF:
         original_q = cfg.q
         original_p = cfg.p
         original_r = cfg.r_multiple
-        
+
         system = AmericanTF(cfg)
         system.run(self.close, self.high, self.low)
-        
+
         # Configuration should remain unchanged
         assert cfg.q == original_q
         assert cfg.p == original_p
@@ -462,20 +458,15 @@ class TestAmericanTF:
         mixed_close = np.concatenate([up_trend, down_trend])
         mixed_high = mixed_close * 1.005
         mixed_low = mixed_close * 0.995
-        
-        cfg = AmericanTFConfig(
-            span_long=20,
-            span_short=5,
-            q=1.0,
-            atr_period=10
-        )
+
+        cfg = AmericanTFConfig(span_long=20, span_short=5, q=1.0, atr_period=10)
         system = AmericanTF(cfg)
         pnl, units = system.run(mixed_close, mixed_high, mixed_low)
-        
+
         # Should have both positive and negative positions
         positive_units = units[units > 1e-10]
         negative_units = units[units < -1e-10]
-        
+
         # Expect some of both (though not guaranteed)
         assert len(positive_units) + len(negative_units) > 0
 
@@ -484,13 +475,13 @@ class TestAmericanTF:
         cfg = AmericanTFConfig()
         system = AmericanTF(cfg)
         pnl, units = system.run(self.close, self.high, self.low)
-        
+
         # Calculate basic performance metrics
         valid_pnl = pnl[~np.isnan(pnl)]
         if len(valid_pnl) > 50:  # Need sufficient data
             total_pnl = np.sum(valid_pnl)
             pnl_vol = np.std(valid_pnl)
-            
+
             # Metrics should be finite
             assert np.isfinite(total_pnl)
             assert np.isfinite(pnl_vol)
@@ -500,25 +491,15 @@ class TestAmericanTF:
         """Test with extreme but valid parameter values."""
         # Very sensitive system
         cfg_sensitive = AmericanTFConfig(
-            span_long=3,
-            span_short=1,
-            atr_period=1,
-            q=0.1,
-            p=0.1,
-            r_multiple=0.001
+            span_long=3, span_short=1, atr_period=1, q=0.1, p=0.1, r_multiple=0.001
         )
         system = AmericanTF(cfg_sensitive)
         pnl, units = system.run(self.close, self.high, self.low)
         assert np.isfinite(pnl[5:]).all()
-        
+
         # Very conservative system
         cfg_conservative = AmericanTFConfig(
-            span_long=200,
-            span_short=50,
-            atr_period=50,
-            q=10.0,
-            p=10.0,
-            r_multiple=0.1
+            span_long=200, span_short=50, atr_period=50, q=10.0, p=10.0, r_multiple=0.1
         )
         system = AmericanTF(cfg_conservative)
         pnl, units = system.run(self.close, self.high, self.low)
@@ -531,10 +512,10 @@ class TestAmericanTF:
         cfg = AmericanTFConfig()
         system1 = AmericanTF(cfg)
         system2 = AmericanTF(cfg)
-        
+
         pnl1, units1 = system1.run(self.close, self.high, self.low)
         pnl2, units2 = system2.run(self.close, self.high, self.low)
-        
+
         # Results should be identical
         np.testing.assert_allclose(pnl1, pnl2)
         np.testing.assert_allclose(units1, units2)

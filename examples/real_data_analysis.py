@@ -15,7 +15,15 @@ from pathlib import Path
 
 # ===== CORE TFUNIFY IMPORTS =====
 try:
-    from tfunify import EuropeanTF, EuropeanTFConfig, AmericanTF, AmericanTFConfig, TSMOM, TSMOMConfig
+    from tfunify import (
+        EuropeanTF,
+        EuropeanTFConfig,
+        AmericanTF,
+        AmericanTFConfig,
+        TSMOM,
+        TSMOMConfig,
+    )
+
     TFUNIFY_AVAILABLE = True
 except ImportError as e:
     TFUNIFY_AVAILABLE = False
@@ -28,6 +36,7 @@ except ImportError as e:
 # Yahoo Finance data integration
 try:
     from tfunify.data import download_csv, load_csv
+
     YAHOO_AVAILABLE = True
 except ImportError:
     YAHOO_AVAILABLE = False
@@ -37,6 +46,7 @@ except ImportError:
 # Data handling
 try:
     import pandas as pd
+
     PANDAS_AVAILABLE = True
 except ImportError:
     PANDAS_AVAILABLE = False
@@ -46,6 +56,7 @@ except ImportError:
 try:
     import matplotlib.pyplot as plt
     import matplotlib.dates as mdates
+
     PLOTTING_AVAILABLE = True
 except ImportError:
     PLOTTING_AVAILABLE = False
@@ -55,18 +66,18 @@ except ImportError:
 def check_requirements():
     """Check if all required dependencies are available."""
     missing = []
-    
+
     if not TFUNIFY_AVAILABLE:
         missing.append("tfunify (core package)")
     if not YAHOO_AVAILABLE:
         missing.append("yfinance (for data download)")
     if not PANDAS_AVAILABLE:
         missing.append("pandas (for data handling)")
-    
+
     optional_missing = []
     if not PLOTTING_AVAILABLE:
         optional_missing.append("matplotlib (for plots)")
-    
+
     if missing:
         print("Missing required dependencies:")
         for dep in missing:
@@ -74,13 +85,13 @@ def check_requirements():
         print("\nInstall missing dependencies:")
         print("  pip install tfunify[yahoo] pandas")
         return False
-    
+
     if optional_missing:
         print("Missing optional dependencies:")
         for dep in optional_missing:
             print(f"  - {dep}")
         print("  Some features may not be available.")
-    
+
     return True
 
 
@@ -114,11 +125,12 @@ def download_market_data(symbol: str = "SPY", period: str = "5y") -> dict:
             # Fallback without pandas
             import csv
             from datetime import datetime
+
             dates = []
-            with open(file_path, 'r') as f:
+            with open(file_path, "r") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    dates.append(datetime.strptime(row['date'], '%Y-%m-%d'))
+                    dates.append(datetime.strptime(row["date"], "%Y-%m-%d"))
             data["dates"] = dates
 
         print(
@@ -143,7 +155,7 @@ def analyze_data_quality(data: dict) -> None:
 
     # Basic statistics
     print(f"Observations: {len(close):,}")
-    if PANDAS_AVAILABLE and hasattr(data['dates'], 'iloc'):
+    if PANDAS_AVAILABLE and hasattr(data["dates"], "iloc"):
         print(f"Date range: {data['dates'].iloc[0].date()} to {data['dates'].iloc[-1].date()}")
     else:
         print(f"Date range: {data['dates'][0]} to {data['dates'][-1]}")
@@ -388,7 +400,7 @@ def create_performance_plots(data: dict, results: dict) -> None:
     ax1.set_title("Price Chart")
     ax1.set_ylabel("Price ($)")
     ax1.grid(True, alpha=0.3)
-    if hasattr(mdates, 'DateFormatter'):
+    if hasattr(mdates, "DateFormatter"):
         ax1.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
 
     # 2. Cumulative P&L
@@ -403,14 +415,14 @@ def create_performance_plots(data: dict, results: dict) -> None:
     ax2.set_ylabel("Cumulative P&L")
     ax2.legend()
     ax2.grid(True, alpha=0.3)
-    if hasattr(mdates, 'DateFormatter'):
+    if hasattr(mdates, "DateFormatter"):
         ax2.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
 
     # 3. European TF weights
     ax3 = axes[1, 0]
     eu_weights = results["european"]["weights"]
     valid_mask = ~np.isnan(eu_weights)
-    if hasattr(dates, '__getitem__'):
+    if hasattr(dates, "__getitem__"):
         ax3.plot(np.array(dates)[valid_mask], eu_weights[valid_mask], "b-", linewidth=1)
     else:
         ax3.plot(range(len(eu_weights[valid_mask])), eu_weights[valid_mask], "b-", linewidth=1)
@@ -423,7 +435,7 @@ def create_performance_plots(data: dict, results: dict) -> None:
     ax4 = axes[1, 1]
     am_units = results["american"]["units"]
     valid_mask = ~np.isnan(am_units)
-    if hasattr(dates, '__getitem__'):
+    if hasattr(dates, "__getitem__"):
         ax4.plot(np.array(dates)[valid_mask], am_units[valid_mask], "r-", linewidth=1)
     else:
         ax4.plot(range(len(am_units[valid_mask])), am_units[valid_mask], "r-", linewidth=1)
@@ -436,7 +448,7 @@ def create_performance_plots(data: dict, results: dict) -> None:
     ax5 = axes[2, 0]
     ts_signals = results["tsmom"]["signals"]
     valid_mask = ~np.isnan(ts_signals)
-    if hasattr(dates, '__getitem__'):
+    if hasattr(dates, "__getitem__"):
         ax5.plot(np.array(dates)[valid_mask], ts_signals[valid_mask], "g-", linewidth=1)
     else:
         ax5.plot(range(len(ts_signals[valid_mask])), ts_signals[valid_mask], "g-", linewidth=1)
@@ -467,7 +479,7 @@ def create_performance_plots(data: dict, results: dict) -> None:
                         vol_ret = np.std(window_valid, ddof=0) * np.sqrt(252)
                         sharpe = mean_ret / vol_ret if vol_ret > 0 else 0
                         rolling_sharpe.append(sharpe)
-                        if hasattr(dates, 'iloc'):
+                        if hasattr(dates, "iloc"):
                             valid_dates.append(dates.iloc[i])
                         else:
                             valid_dates.append(dates[i])
@@ -480,7 +492,7 @@ def create_performance_plots(data: dict, results: dict) -> None:
     ax6.legend()
     ax6.grid(True, alpha=0.3)
     ax6.axhline(y=0, color="k", linestyle="--", alpha=0.5)
-    if hasattr(mdates, 'DateFormatter'):
+    if hasattr(mdates, "DateFormatter"):
         ax6.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
 
     # Format x-axes
@@ -514,7 +526,7 @@ def analyze_market_regimes(data: dict, results: dict) -> None:
     for i in range(window, len(prices)):
         ret = (prices[i] / prices[i - window] - 1) * 100
         rolling_returns.append(ret)
-        if hasattr(dates, 'iloc'):
+        if hasattr(dates, "iloc"):
             regime_dates.append(dates.iloc[i])
         else:
             regime_dates.append(dates[i])
@@ -636,4 +648,5 @@ def main():
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(main())
