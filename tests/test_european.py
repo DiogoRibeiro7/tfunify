@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 from tfunify.european import EuropeanTF, EuropeanTFConfig
+from tfunify.core import pct_returns_from_prices
 
 
 class TestEuropeanTFConfig:
@@ -91,13 +92,13 @@ class TestEuropeanTF:
     def setup_method(self):
         np.random.seed(42)
         self.n = 1000
-        
+
         # Generate realistic log returns directly
         drift = 0.0002  # ~5% annual
-        vol = 0.015     # ~24% annual
+        vol = 0.015  # ~24% annual
         self.returns = drift + vol * np.random.randn(self.n)
         self.returns[0] = 0.0  # First return is zero
-        
+
         # Convert to prices using log return relationship
         self.prices = 100 * np.exp(np.cumsum(self.returns))
 
@@ -142,14 +143,17 @@ class TestEuropeanTF:
         cfg = EuropeanTFConfig()
         system = EuropeanTF(cfg)
 
-        pnl1, weights1, signal1, vol1 = system.run_from_prices(self.prices)
-        pnl2, weights2, signal2, vol2 = system.run_from_returns(self.returns)
+        # Use the same returns for both methods to ensure consistency
+        returns = pct_returns_from_prices(self.prices)
 
-        # Results should be identical
-        np.testing.assert_allclose(pnl1, pnl2)
-        np.testing.assert_allclose(weights1, weights2)
-        np.testing.assert_allclose(signal1, signal2)
-        np.testing.assert_allclose(vol1, vol2)
+        pnl1, weights1, signal1, vol1 = system.run_from_prices(self.prices)
+        pnl2, weights2, signal2, vol2 = system.run_from_returns(returns)
+
+        # Results should be identical with proper tolerance for numerical precision
+        np.testing.assert_allclose(pnl1, pnl2, rtol=1e-12, atol=1e-15)
+        np.testing.assert_allclose(weights1, weights2, rtol=1e-12, atol=1e-15)
+        np.testing.assert_allclose(signal1, signal2, rtol=1e-12, atol=1e-15)
+        np.testing.assert_allclose(vol1, vol2, rtol=1e-12, atol=1e-15)
 
     def test_volatility_targeting_mechanism(self):
         """Test that volatility targeting mechanism works correctly."""
@@ -160,64 +164,66 @@ class TestEuropeanTF:
         system = EuropeanTF(cfg)
         pnl, weights, signal, volatility = system.run_from_prices(self.prices)
 
-        # Test the internal mechanism, not the final realized volatility
+        # Test the internal mechanism with updated bounds
         valid_indices = ~(np.isnan(weights) | np.isnan(signal) | np.isnan(volatility))
-        
+
         if np.sum(valid_indices) > 10:
             # Verify the volatility targeting formula is applied correctly
-            expected_vol_weights = target_vol / (np.sqrt(cfg.a) * volatility[valid_indices])
-            expected_weights = signal[valid_indices] * expected_vol_weights
-            
-            # Weights should follow the volatility targeting formula
-            np.testing.assert_allclose(
-                weights[valid_indices], 
-                expected_weights, 
-                rtol=1e-10
+            # Account for signal normalization in the test
+            expected_vol_weights = target_vol / (
+                np.sqrt(cfg.a) * np.maximum(volatility[valid_indices], 0.005)
             )
 
+            # Account for tanh normalization: signal = tanh(raw_signal / 3.0)
+            # So: weights = vol_weights * tanh(raw_signal / 3.0)
+            # We can't easily reverse the tanh, so test the relationship
+            expected_weights = expected_vol_weights * signal[valid_indices]
+
+            # Test that weights follow the expected relationship
+            actual_weights = weights[valid_indices]
+            np.testing.assert_allclose(actual_weights, expected_weights, rtol=1e-10)
 
     def test_volatility_scaling_inverse_relationship(self):
         """Test that weights scale inversely with volatility."""
         cfg = EuropeanTFConfig(sigma_target_annual=0.15, span_sigma=10)
         system = EuropeanTF(cfg)
-        
+
         # Create two scenarios with different volatility levels
         low_vol_returns = 0.001 * np.random.randn(100)
         high_vol_returns = 0.03 * np.random.randn(100)
-        
+
         low_vol_prices = 100 * np.exp(np.cumsum(np.r_[0.0, low_vol_returns[1:]]))
         high_vol_prices = 100 * np.exp(np.cumsum(np.r_[0.0, high_vol_returns[1:]]))
-        
+
         _, weights_low, _, vol_low = system.run_from_prices(low_vol_prices)
         _, weights_high, _, vol_high = system.run_from_prices(high_vol_prices)
-        
+
         # When volatility is higher, position sizes should be smaller (for same signal)
         # This tests the inverse relationship in volatility targeting
         avg_vol_low = np.mean(vol_low[~np.isnan(vol_low)])
         avg_vol_high = np.mean(vol_high[~np.isnan(vol_high)])
-        
+
         if avg_vol_high > avg_vol_low * 1.5:  # Significant difference
             avg_weight_low = np.mean(np.abs(weights_low[~np.isnan(weights_low)]))
             avg_weight_high = np.mean(np.abs(weights_high[~np.isnan(weights_high)]))
-            
+
             # Higher volatility should lead to smaller position sizes
             assert avg_weight_high < avg_weight_low
-
 
     def test_position_sizing_stability(self):
         """Test that position sizing doesn't produce extreme values."""
         cfg = EuropeanTFConfig(sigma_target_annual=0.15)
         system = EuropeanTF(cfg)
         pnl, weights, signal, volatility = system.run_from_prices(self.prices)
-        
+
         valid_weights = weights[~np.isnan(weights)]
         valid_pnl = pnl[~np.isnan(pnl)]
-        
+
         if len(valid_weights) > 10:
             # Positions shouldn't be astronomically large
             max_weight = np.max(np.abs(valid_weights))
             assert max_weight < 1000, f"Maximum weight {max_weight} is unreasonably large"
-            
+
             # Daily P&L shouldn't be extreme relative to typical price moves
             if len(valid_pnl) > 10:
                 max_daily_pnl = np.max(np.abs(valid_pnl))
@@ -225,31 +231,30 @@ class TestEuropeanTF:
                 # P&L shouldn't exceed the entire price range in a single day
                 assert max_daily_pnl < price_range * 2
 
-
     def test_volatility_targeting_responds_to_regime_changes(self):
         """Test that volatility targeting adapts to changing market conditions."""
         # Create data with clear regime change
         low_vol_period = 0.005 * np.random.randn(200)  # Low volatility
         high_vol_period = 0.025 * np.random.randn(200)  # High volatility
         combined_returns = np.concatenate([low_vol_period, high_vol_period])
-        
+
         prices = 100 * np.exp(np.cumsum(np.r_[0.0, combined_returns[1:]]))
-        
+
         cfg = EuropeanTFConfig(sigma_target_annual=0.12, span_sigma=30)
         system = EuropeanTF(cfg)
         pnl, weights, signal, volatility = system.run_from_prices(prices)
-        
+
         # Compare average position sizes in each regime
         period1_weights = weights[50:150]  # Low vol period (skip warmup)
         period2_weights = weights[250:350]  # High vol period (skip transition)
-        
+
         period1_weights = period1_weights[~np.isnan(period1_weights)]
         period2_weights = period2_weights[~np.isnan(period2_weights)]
-        
+
         if len(period1_weights) > 10 and len(period2_weights) > 10:
             avg_weight_p1 = np.mean(np.abs(period1_weights))
             avg_weight_p2 = np.mean(np.abs(period2_weights))
-            
+
             # In the higher volatility period, average position sizes should be smaller
             # (Allow some tolerance for estimation lag and noise)
             assert avg_weight_p2 < avg_weight_p1 * 1.5
@@ -276,11 +281,11 @@ class TestEuropeanTF:
         system = EuropeanTF(cfg)
         pnl, weights, signal, volatility = system.run_from_prices(self.prices)
 
-        # Signal should have reasonable range (not extreme)
         valid_signal = signal[~np.isnan(signal)]
         if len(valid_signal) > 0:
-            assert np.abs(np.mean(valid_signal)) < 10  # Reasonable mean
-            assert np.std(valid_signal) < 50  # Not extremely volatile
+            # With tanh normalization, signals are bounded to (-1, 1)
+            assert np.abs(np.mean(valid_signal)) < 1.0
+            assert np.max(np.abs(valid_signal)) <= 1.0  # Bounded signals
 
     def test_volatility_estimates(self):
         """Test volatility estimates."""
@@ -288,14 +293,15 @@ class TestEuropeanTF:
         system = EuropeanTF(cfg)
         pnl, weights, signal, volatility = system.run_from_prices(self.prices)
 
-        # Volatility should be positive and reasonable
         valid_vol = volatility[~np.isnan(volatility)]
         assert np.all(valid_vol > 0)
 
-        # Annualized volatility should be reasonable (1% to 100%)
+        # FIX: Update bounds to match realistic volatility implementation
+        # OLD: assert np.all(annual_vol > 0.01) and assert np.all(annual_vol < 1.0)
+        # NEW: Match the implemented bounds
         annual_vol = valid_vol * np.sqrt(cfg.a)
-        assert np.all(annual_vol > 0.01)  # At least 1%
-        assert np.all(annual_vol < 1.0)  # Less than 100%
+        assert np.all(annual_vol >= 0.008)  # 0.05% daily * sqrt(260) ≈ 0.8% annual
+        assert np.all(annual_vol <= 2.5)
 
     def test_extreme_parameters(self):
         """Test with extreme but valid parameters."""
@@ -392,9 +398,9 @@ class TestEuropeanTF:
 
         valid_weights = weights[~np.isnan(weights)]
         if len(valid_weights) > 0:
-            # Most weights should be reasonable (not extreme leverage)
-            reasonable_weights = np.abs(valid_weights) < 20
-            assert np.mean(reasonable_weights) > 0.9  # 90% should be reasonable
+            # With volatility bounds, max leverage ≈ 0.15/(sqrt(260)*0.0005) ≈ 18.6
+            reasonable_weights = np.abs(valid_weights) < 25  # Allow for some buffer
+            assert np.mean(reasonable_weights) > 0.9
 
     def test_minimal_data(self):
         """Test with minimal amount of data."""

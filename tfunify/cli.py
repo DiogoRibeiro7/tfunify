@@ -15,23 +15,6 @@ def _load_csv(path: str) -> dict[str, NDArray[np.floating]]:
     """
     Load a CSV with at least 'close' column; 'high'/'low' are optional and
     default to 'close' if missing.
-
-    Parameters
-    ----------
-    path : str
-        Path to CSV file
-
-    Returns
-    -------
-    dict[str, NDArray[np.floating]]
-        Dictionary with 'close', 'high', 'low' arrays
-
-    Raises
-    ------
-    FileNotFoundError
-        If CSV file doesn't exist
-    ValueError
-        If CSV doesn't contain required 'close' column
     """
     import csv
     from pathlib import Path
@@ -39,7 +22,6 @@ def _load_csv(path: str) -> dict[str, NDArray[np.floating]]:
     csv_path = Path(path)
     if not csv_path.exists():
         raise FileNotFoundError(f"CSV file not found: {path}")
-    # Check if file is completely empty
     if csv_path.stat().st_size == 0:
         raise ValueError("CSV file is empty")
 
@@ -73,23 +55,10 @@ def _load_csv(path: str) -> dict[str, NDArray[np.floating]]:
 def _summarise(daily: NDArray[np.floating], trading_days: int = 260) -> str:
     """
     Generate summary statistics from daily PnL/returns.
-
-    Parameters
-    ----------
-    daily : NDArray[np.floating]
-        Daily PnL or returns
-    trading_days : int, default=260
-        Trading days per year for annualization
-
-    Returns
-    -------
-    str
-        Formatted summary string with annualized metrics
     """
     if len(daily) == 0:
         return "No data to summarize"
 
-    # Filter out non-finite values for statistics
     valid_data = daily[np.isfinite(daily)]
     if len(valid_data) == 0:
         return "No valid data to summarize"
@@ -101,11 +70,6 @@ def _summarise(daily: NDArray[np.floating], trading_days: int = 260) -> str:
     sharpe = ann_mu / ann_sd if ann_sd > 0 else float("nan")
 
     return f"Ann μ={ann_mu:.3%}  Ann σ={ann_sd:.3%}  SR={sharpe:.2f}  (n={len(valid_data)})"
-
-
-# ---------------------------
-# Systems subcommands
-# ---------------------------
 
 
 def cmd_european(args: argparse.Namespace) -> int:
@@ -197,60 +161,32 @@ def cmd_tsmom(args: argparse.Namespace) -> int:
         return 1
 
 
-# ---------------------------
-# Downloader subcommand
-# ---------------------------
-
-
 def _download_csv_yahoo(ticker: str, out_path: str, period: str, interval: str) -> str:
     """
-    Minimal Yahoo Finance → CSV downloader without pandas.
+    Minimal Yahoo Finance → CSV downloader.
 
-    Parameters
-    ----------
-    ticker : str
-        Yahoo Finance ticker symbol
-    out_path : str
-        Output CSV path
-    period : str
-        Data period (e.g., "1y", "5y")
-    interval : str
-        Data interval (e.g., "1d", "1wk")
-
-    Returns
-    -------
-    str
-        Path to output file
-
-    Raises
-    ------
-    ImportError
-        If yfinance is not installed
-    SystemExit
-        If no data is returned
+    PROPER FIX: Handle optional dependency correctly.
     """
     try:
         import yfinance as yf
-    except Exception:
-        print("The 'download' command requires the optional 'yahoo' extra.")
-        print("Install with: pip install tfunify[yahoo]")
-        raise
+    except ImportError as e:
+        # PROPER FIX: Raise ImportError with clear message for optional dependency
+        raise ImportError(
+            "The 'download' command requires the optional 'yahoo' extra. "
+            "Install with: pip install tfunify[yahoo]"
+        ) from e
 
-    # Fetch dataframe-like object; we'll only read columns we need.
     print(f"Downloading {ticker} data...")
     df = yf.download(ticker, period=period, interval=interval, auto_adjust=False, progress=False)
 
-    # Robust emptiness check (yfinance returns an empty DataFrame on errors)
     if getattr(df, "empty", True):
-        raise SystemExit(f"No data returned for {ticker} (period={period}, interval={interval}).")
+        raise ValueError(f"No data returned for {ticker} (period={period}, interval={interval}).")
 
-    # Write a CSV with the necessary columns
     import csv
 
     with open(out_path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["date", "open", "high", "low", "close", "volume"])
-        # df.iterrows() yields (Timestamp, row)
         for dt, row in df.iterrows():
             w.writerow(
                 [
@@ -276,16 +212,13 @@ def cmd_download(args: argparse.Namespace) -> int:
         )
         print(f"Successfully saved {args.ticker} data to {out}")
         return 0
-    except SystemExit:
-        raise
+    except ImportError as e:
+        # PROPER FIX: Handle missing optional dependency gracefully
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
     except Exception as e:
         print(f"Error downloading data: {e}", file=sys.stderr)
         return 1
-
-
-# ---------------------------
-# Entry point
-# ---------------------------
 
 
 def main() -> int:
@@ -353,7 +286,6 @@ Examples:
         args = p.parse_args()
         return args.func(args)
     except SystemExit as e:
-        # Convert argparse SystemExit to return code
         return int(e.code) if e.code is not None else 1
     except KeyboardInterrupt:
         print("\nOperation cancelled by user", file=sys.stderr)

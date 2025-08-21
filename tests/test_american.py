@@ -98,7 +98,6 @@ class TestTrueRange:
         expected = np.array([5.0, 6.0, 3.0, 4.0])
         np.testing.assert_allclose(tr, expected)
 
-
     def test_true_range_with_gaps(self):
         """Test True Range with price gaps."""
         high = np.array([100.0, 120.0, 115.0])  # Gap up
@@ -114,7 +113,6 @@ class TestTrueRange:
         expected = np.array([5.0, 22.0, 8.0])
         np.testing.assert_allclose(tr, expected)
 
-
     def test_true_range_small_gaps(self):
         """Test True Range with smaller gaps where H-L dominates."""
         high = np.array([105.0, 106.0, 107.0])
@@ -129,7 +127,6 @@ class TestTrueRange:
         # t=2: max(107-102, |107-104|, |102-104|) = max(5, 3, 2) = 5
         expected = np.array([5.0, 5.0, 5.0])
         np.testing.assert_allclose(tr, expected)
-
 
     def test_true_range_gap_down(self):
         """Test True Range with gap down scenario."""

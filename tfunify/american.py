@@ -32,7 +32,8 @@ def _true_range(high: FloatArray, low: FloatArray, close: FloatArray) -> FloatAr
     Raises
     ------
     ValueError
-        If input arrays do not have the same shape or if any high price is less than the corresponding low price.
+        If input arrays do not have the same shape or if any high price is
+        less than the corresponding low price.
     """
     high = np.asarray(high, dtype=float)
     low = np.asarray(low, dtype=float)
