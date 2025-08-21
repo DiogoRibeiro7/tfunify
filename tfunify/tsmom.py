@@ -99,12 +99,12 @@ class TSMOM:
         prices = np.asarray(prices, dtype=float)
         if prices.size == 0:
             raise ValueError("Returns array cannot be empty")
-        
+
         # This will raise "prices must have length >= 2" for single element
         # but test expects "Returns array cannot be empty"
         if prices.size < 2:
             raise ValueError("Returns array cannot be empty")
-        
+
         r = pct_returns_from_prices(prices)
         return self.run_from_returns(r)
 

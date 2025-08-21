@@ -12,13 +12,13 @@ def span_to_nu(span: int) -> float:
     """Convert EWMA span to ν using ν = 1 - 2/(span+1)."""
     if not isinstance(span, int) or span < 1:
         raise ValueError("span must be an integer >= 1.")
-    
+
     nu = 1.0 - 2.0 / (span + 1.0)
-    
+
     # Handle edge case where span=1 gives nu=0
     if nu <= 0.0:
         raise ValueError(f"span={span} results in invalid nu={nu}. Use span >= 2.")
-    
+
     return nu
 
 
@@ -184,11 +184,11 @@ def ewma_volatility_from_returns(r: FloatArray, nu_sigma: float, eps: float = 1e
     r2 = np.square(r)
     s2 = ewma(r2, nu_sigma)
     sigma = np.sqrt(np.maximum(s2, eps))
-    
+
     # Ensure first value is exactly 0 for zero first return
     if len(r) > 0 and r[0] == 0.0:
         sigma[0] = eps  # Use minimum floor, not 0
-    
+
     return sigma
 
 

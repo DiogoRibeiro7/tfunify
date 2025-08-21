@@ -49,11 +49,11 @@ def _load_csv(path: str) -> dict[str, NDArray[np.floating]]:
     try:
         with open(path, newline="") as f:
             reader = csv.DictReader(f)
-            
+
             # Check if file has no header or wrong header
             if not reader.fieldnames:
                 raise ValueError("CSV file is empty")
-            
+
             if "close" not in reader.fieldnames:
                 raise ValueError("CSV must contain a 'close' column.")
 

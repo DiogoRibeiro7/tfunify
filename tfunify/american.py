@@ -23,17 +23,17 @@ def _true_range(high: FloatArray, low: FloatArray, close: FloatArray) -> FloatAr
 
     n = len(close)
     tr = np.zeros(n)
-    
+
     # First period: just H-L
     tr[0] = high[0] - low[0]
-    
+
     # Subsequent periods: max(H-L, |H-C_prev|, |L-C_prev|)
     for i in range(1, n):
         hl = high[i] - low[i]
-        hc = abs(high[i] - close[i-1])
-        lc = abs(low[i] - close[i-1])
+        hc = abs(high[i] - close[i - 1])
+        lc = abs(low[i] - close[i - 1])
         tr[i] = max(hl, hc, lc)
-    
+
     return tr
 
 
@@ -159,7 +159,7 @@ class AmericanTF:
                 raise ValueError("high, low, and close must have same shape")
 
         atr_vals = _atr(high, low, close, self.cfg.atr_period)
-        
+
         # Handle extreme span values that might cause issues
         try:
             nu_long = span_to_nu(self.cfg.span_long)
@@ -168,7 +168,7 @@ class AmericanTF:
             if "nu must be in (0,1)" in str(e):
                 raise ValueError(f"Invalid span parameters: {e}") from e
             raise
-        
+
         s_long = ewma_variance_preserving(close, nu_long)
         s_fast = ewma_variance_preserving(close, nu_short)
 
