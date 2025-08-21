@@ -5,7 +5,6 @@ import sys
 
 import numpy as np
 from numpy.typing import NDArray
-import yfinance as yf  # type: ignore[import-not-found]
 
 from .american import AmericanTF, AmericanTFConfig
 from .european import EuropeanTF, EuropeanTFConfig
@@ -229,6 +228,12 @@ def _download_csv_yahoo(ticker: str, out_path: str, period: str, interval: str) 
     SystemExit
         If no data is returned
     """
+    try:
+        import yfinance as yf  # type: ignore[import-not-found]
+    except Exception:
+        print("The 'download' command requires the optional 'yahoo' extra.")
+        print("Install with: pip install tfunify[yahoo]")
+        raise
 
     # Fetch dataframe-like object; we'll only read columns we need.
     print(f"Downloading {ticker} data...")
