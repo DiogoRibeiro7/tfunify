@@ -11,7 +11,6 @@ from .european import EuropeanTF, EuropeanTFConfig
 from .tsmom import TSMOM, TSMOMConfig
 
 
-
 def _load_csv(path: str) -> dict[str, NDArray[np.floating]]:
     """
     Load a CSV with at least 'close' column; 'high'/'low' are optional and
