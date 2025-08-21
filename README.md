@@ -209,7 +209,7 @@ The theoretical framework shows that TF systems benefit from the square of the d
 
 ## License
 
-MIT License - see <LICENSE> file for details.
+This project is licensed under the [MIT License](LICENSE).
 
 ## Contributing
 
