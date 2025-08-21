@@ -40,12 +40,21 @@ def _load_csv(path: str) -> dict[str, NDArray[np.floating]]:
     if not csv_path.exists():
         raise FileNotFoundError(f"CSV file not found: {path}")
 
+    # Check if file is empty first
+    if csv_path.stat().st_size == 0:
+        raise ValueError("CSV file is empty")
+
     cols: dict[str, list[float]] = {"close": [], "high": [], "low": []}
 
     try:
         with open(path, newline="") as f:
             reader = csv.DictReader(f)
-            if not reader.fieldnames or "close" not in reader.fieldnames:
+            
+            # Check if file has no header or wrong header
+            if not reader.fieldnames:
+                raise ValueError("CSV file is empty")
+            
+            if "close" not in reader.fieldnames:
                 raise ValueError("CSV must contain a 'close' column.")
 
             row_count = 0
@@ -53,7 +62,6 @@ def _load_csv(path: str) -> dict[str, NDArray[np.floating]]:
                 row_count += 1
                 try:
                     cols["close"].append(float(row["close"]))
-                    # Fall back to 'close' if high/low are absent
                     cols["high"].append(float(row.get("high", row["close"])))
                     cols["low"].append(float(row.get("low", row["close"])))
                 except (ValueError, KeyError) as e:
@@ -63,6 +71,9 @@ def _load_csv(path: str) -> dict[str, NDArray[np.floating]]:
                 raise ValueError("CSV file is empty")
 
     except Exception as e:
+        # Don't wrap the specific errors we want to preserve
+        if "CSV file is empty" in str(e) or "CSV must contain a 'close' column" in str(e):
+            raise
         raise ValueError(f"Error reading CSV file: {e}") from e
 
     return {k: np.asarray(v, dtype=float) for k, v in cols.items()}

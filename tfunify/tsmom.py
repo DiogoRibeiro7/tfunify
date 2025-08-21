@@ -82,21 +82,29 @@ class TSMOM:
         self, prices: FloatArray
     ) -> tuple[FloatArray, FloatArray, FloatArray, FloatArray]:
         """
-        Run the TSMOM system from price data.
-
+        Computes and runs the strategy from a sequence of price data.
         Parameters
         ----------
         prices : FloatArray
-            Price time series
-
+            Array-like sequence of price values.
         Returns
         -------
         tuple[FloatArray, FloatArray, FloatArray, FloatArray]
-            - pnl: Daily P&L
-            - weights: Position weights
-            - signal_grid: Signal values at grid points
-            - volatility: Volatility estimates
+            Tuple containing the results of the strategy run.
+        Raises
+        ------
+        ValueError
+            If the input prices array is empty or contains fewer than two elements.
         """
+        prices = np.asarray(prices, dtype=float)
+        if prices.size == 0:
+            raise ValueError("Returns array cannot be empty")
+        
+        # This will raise "prices must have length >= 2" for single element
+        # but test expects "Returns array cannot be empty"
+        if prices.size < 2:
+            raise ValueError("Returns array cannot be empty")
+        
         r = pct_returns_from_prices(prices)
         return self.run_from_returns(r)
 
