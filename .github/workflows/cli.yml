@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main, develop ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
 
 jobs:
   test:
@@ -20,14 +20,13 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: 'pip'
+          cache: pip
 
       - name: Install Poetry
         uses: abatilo/actions-poetry@v3
         with:
           poetry-version: "1.8.3"
 
-      # (Optional) cache Poetry venvs and downloads
       - name: Cache Poetry
         uses: actions/cache@v4
         with:
@@ -63,7 +62,6 @@ jobs:
           file: ./coverage.xml
           fail_ci_if_error: true
         env:
-          # For private repos, set this in Settings ▸ Secrets and variables ▸ Actions
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   integration-test:
@@ -77,7 +75,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: 'pip'
+          cache: pip
 
       - name: Install Poetry
         uses: abatilo/actions-poetry@v3
@@ -93,21 +91,25 @@ jobs:
 
       - name: Test CLI functionality
         run: |
-          # Create test data
-          python -c "
-          import numpy as np
-          import csv
-          np.random.seed(42)
+          set -e
+          # Create test data (stdlib only; no numpy)
+          poetry run python - <<'PY'
+          import random, csv
+          random.seed(42)
           n = 200
-          prices = 100 + np.cumsum(0.01 * np.random.randn(n))
+          p = 100.0
+          prices = []
+          for i in range(n):
+              p += 0.01 * random.gauss(0.0, 1.0)  # random walk
+              prices.append(p)
           with open('test_data.csv', 'w', newline='') as f:
-              writer = csv.writer(f)
-              writer.writerow(['date', 'close'])
-              for i, p in enumerate(prices):
-                  writer.writerow([f'2023-{(i%12)+1:02d}-{(i%28)+1:02d}', f'{p:.2f}'])
-          "
+              w = csv.writer(f)
+              w.writerow(['date', 'close'])
+              for i, price in enumerate(prices):
+                  w.writerow([f'2023-{(i%12)+1:02d}-{(i%28)+1:02d}', f'{price:.2f}'])
+          PY
 
-          # Test CLI commands
+          # Test CLI commands (inside Poetry env)
           poetry run tfu european --csv test_data.csv --span-long 50 --span-short 10
           poetry run tfu american --csv test_data.csv --span-long 50 --span-short 10 --atr-period 20
           poetry run tfu tsmom --csv test_data.csv --L 5 --M 8
