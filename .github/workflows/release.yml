@@ -4,11 +4,53 @@ on:
   push:
     tags:
       - "v*.*.*"
+    branches:
+      - main  # Only run releases from main branch
 
 jobs:
+  # Verify we're on main branch
+  verify-branch:
+    name: Verify release is from main branch
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history to check branch
+          
+      - name: Verify tag is on main branch
+        run: |
+          # Get the commit hash of the tag
+          TAG_COMMIT=$(git rev-list -n 1 $GITHUB_REF)
+          echo "Tag commit: $TAG_COMMIT"
+          
+          # Check if this commit is on main branch
+          if git merge-base --is-ancestor $TAG_COMMIT origin/main; then
+            echo "✅ Tag is on main branch"
+          else
+            echo "❌ Error: Tag is not on main branch"
+            echo "Please merge to main before creating release tags"
+            exit 1
+          fi
+          
+          # Also verify the tag points to the latest commit on main
+          MAIN_COMMIT=$(git rev-parse origin/main)
+          echo "Main commit: $MAIN_COMMIT"
+          
+          if [ "$TAG_COMMIT" = "$MAIN_COMMIT" ]; then
+            echo "✅ Tag points to latest main commit"
+          else
+            echo "⚠️  Warning: Tag does not point to latest main commit"
+            echo "Tag commit: $TAG_COMMIT"
+            echo "Main commit: $MAIN_COMMIT"
+            echo "Consider creating tag from latest main"
+          fi
+
   test:
     name: Run tests before release
     runs-on: ubuntu-latest
+    needs: verify-branch
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
@@ -47,6 +89,7 @@ jobs:
   test-cli:
     name: Test CLI functionality before release
     runs-on: ubuntu-latest
+    needs: verify-branch
     
     steps:
       - name: Checkout code
@@ -100,7 +143,7 @@ jobs:
   build-publish:
     name: Build and publish to PyPI
     runs-on: ubuntu-latest
-    needs: [test, test-cli]  # Wait for all tests to pass
+    needs: [verify-branch, test, test-cli]  # Wait for branch verification and all tests to pass
     
     steps:
       - name: Checkout code
