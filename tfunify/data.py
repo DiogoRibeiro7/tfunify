@@ -2,17 +2,12 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 
 import numpy as np
 
-try:
+if TYPE_CHECKING:
     import yfinance as yf
-except ImportError as e:
-    raise ImportError(
-        "yfinance is required for tfunify.data. "
-        "Install with `pip install tfunify[yahoo]`."
-    ) from e
 
 
 def download_csv(
@@ -40,12 +35,27 @@ def download_csv(
     Path
         Path to the written CSV file.
 
+    Raises
+    ------
+    ImportError
+        If yfinance is not installed
+    ValueError
+        If no data is returned for the ticker
+
     CSV format
     ----------
     date,open,high,low,close,volume
     2020-01-02,323.8,325.0,322.1,324.1,28000000
     ...
     """
+    try:
+        import yfinance as yf
+    except ImportError as e:
+        raise ImportError(
+            "yfinance is required for tfunify.data. "
+            "Install with `pip install tfunify[yahoo]`."
+        ) from e
+
     path = Path(path)
     df = yf.download(ticker, period=period, interval=interval, auto_adjust=False, progress=False)
     if df.empty:
@@ -70,16 +80,43 @@ def load_csv(path: str | Path) -> dict[str, np.ndarray]:
     """
     Load a CSV saved by `download_csv` into numpy arrays.
 
+    Parameters
+    ----------
+    path : str | Path
+        Path to CSV file
+
     Returns
     -------
-    dict with keys: "close", "high", "low", "open", "volume"
+    dict[str, np.ndarray]
+        Dictionary with keys: "close", "high", "low", "open", "volume"
+        
+    Raises
+    ------
+    FileNotFoundError
+        If the CSV file doesn't exist
+    ValueError
+        If required columns are missing
     """
-    import csv
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"CSV file not found: {path}")
 
     data = {k: [] for k in ["open", "high", "low", "close", "volume"]}
+    
     with open(path, "r", newline="") as f:
         reader = csv.DictReader(f)
+        if not reader.fieldnames:
+            raise ValueError("CSV file appears to be empty or malformed")
+            
+        missing_cols = set(data.keys()) - set(reader.fieldnames)
+        if missing_cols:
+            raise ValueError(f"Missing required columns: {missing_cols}")
+            
         for row in reader:
-            for k in data:
-                data[k].append(float(row[k]))
+            try:
+                for k in data:
+                    data[k].append(float(row[k]))
+            except (ValueError, KeyError) as e:
+                raise ValueError(f"Error parsing row {reader.line_num}: {e}") from e
+                
     return {k: np.asarray(v, dtype=float) for k, v in data.items()}
