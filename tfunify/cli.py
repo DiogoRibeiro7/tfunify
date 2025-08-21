@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import sys
 from typing import TYPE_CHECKING
-from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -13,7 +12,7 @@ from .european import EuropeanTF, EuropeanTFConfig
 from .tsmom import TSMOM, TSMOMConfig
 
 if TYPE_CHECKING:
-    import yfinance as yf # type: ignore[import-not-found]
+    pass  # type: ignore[import-not-found]
 
 
 def _load_csv(path: str) -> dict[str, NDArray[np.floating]]:
@@ -233,7 +232,7 @@ def _download_csv_yahoo(ticker: str, out_path: str, period: str, interval: str) 
         If no data is returned
     """
     try:
-        import yfinance as yf # type: ignore[import-not-found]
+        import yfinance as yf  # type: ignore[import-not-found]
     except ImportError as e:
         raise SystemExit(
             "The 'download' command requires yfinance. Install extra:\n"
