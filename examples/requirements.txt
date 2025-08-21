@@ -1,0 +1,8 @@
+# Core requirements
+tfunify
+
+# Optional dependencies for full functionality
+tfunify[yahoo]  # For data download examples
+matplotlib      # For plotting
+pandas         # For data handling
+scipy          # For optimization examples
