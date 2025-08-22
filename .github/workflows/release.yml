@@ -2,12 +2,17 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*.*.*"   # release only on version tags
+    branches: [ main ]           # run tests on pushes to main
+    tags: [ "v*.*.*" ]           # full release only on version tags
+  workflow_dispatch: {}          # allow manual run
+
+permissions:
+  contents: write
 
 jobs:
   verify-branch:
     name: Verify release tag is on main
+    if: startsWith(github.ref, 'refs/tags/')   # only for tag events
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -15,19 +20,21 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Verify tag ancestry and recency
+      - name: Verify tag ancestry and recency (no tag fetch)
         run: |
-          # Ensure remote refs & tags are present
-          git fetch origin +refs/heads/*:refs/remotes/origin/* --tags
+          set -euo pipefail
+          # Fetch only branch heads; avoid tags to prevent clobber errors
+          git fetch --prune --no-tags origin +refs/heads/*:refs/remotes/origin/*
 
           echo "GITHUB_REF=$GITHUB_REF"
           echo "GITHUB_REF_NAME=$GITHUB_REF_NAME"
+          echo "GITHUB_SHA=$GITHUB_SHA"
 
-          # Commit pointed to by the tag
-          TAG_COMMIT="$(git rev-list -n 1 "$GITHUB_REF")"
+          # The commit the tag points to
+          TAG_COMMIT="$GITHUB_SHA"
           echo "Tag commit: $TAG_COMMIT"
 
-          # Ensure the tag commit is on main
+          # Ensure the tag commit is contained in main
           if git merge-base --is-ancestor "$TAG_COMMIT" origin/main; then
             echo "✅ Tag commit is contained in main"
           else
@@ -41,21 +48,17 @@ jobs:
           if [ "$TAG_COMMIT" = "$MAIN_COMMIT" ]; then
             echo "✅ Tag points to the latest main commit"
           else
-
             echo "⚠️  Warning: Tag does not point to the latest main commit"
           fi
 
   test:
-    name: Run tests before release
+    name: Run tests
     runs-on: ubuntu-latest
-    needs: verify-branch
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -70,17 +73,14 @@ jobs:
       - name: Configure Poetry + Install
         run: |
           set -euo pipefail
-
           poetry config virtualenvs.prefer-active-python true
           poetry env use "$(python -c 'import sys; print(sys.executable)')"
           poetry install --with dev --no-interaction --no-ansi
 
       - name: Lint
-
         run: |
           poetry run ruff check .
           poetry run ruff format --check .
-
 
       - name: Type check
         run: poetry run mypy tfunify
@@ -91,11 +91,8 @@ jobs:
   test-cli:
     name: Test CLI functionality
     runs-on: ubuntu-latest
-    needs: verify-branch
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -104,13 +101,11 @@ jobs:
 
       - name: Install Poetry
         uses: abatilo/actions-poetry@v3
-
         with:
           poetry-version: "1.8.3"
 
       - name: Configure Poetry + Install
         run: |
-
           set -euo pipefail
           poetry config virtualenvs.prefer-active-python true
           poetry env use "$(python -c 'import sys; print(sys.executable)')"
@@ -129,7 +124,6 @@ jobs:
               for i, p in enumerate(prices):
                   w.writerow([f'2023-{(i%12)+1:02d}-{(i%28)+1:02d}', f'{p:.2f}'])
           PY
-
 
       - name: Run CLI commands
         run: |
@@ -151,18 +145,17 @@ jobs:
                   ok = False
                   print(f'Validation failed for {system}: {e}', file=sys.stderr)
           if not ok:
-              raise SystemExit(1)
+            raise SystemExit(1)
           print('All CLI tests passed!')
           PY
 
   build-publish:
     name: Build and publish to PyPI
+    if: startsWith(github.ref, 'refs/tags/')   # only for tag events
     runs-on: ubuntu-latest
     needs: [verify-branch, test, test-cli]
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -177,15 +170,12 @@ jobs:
       - name: Verify version tag matches pyproject
         run: |
           set -euo pipefail
-          # Strip leading 'v' from tag name to get semver
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           echo "Tag version: $TAG_VERSION"
-
           poetry config virtualenvs.prefer-active-python true
           poetry env use "$(python -c 'import sys; print(sys.executable)')"
-          PYPROJECT_VERSION="$(poetry version --short)"
+          PYPROJECT_VERSION="$(poetry version -s)"
           echo "pyproject version: $PYPROJECT_VERSION"
-
           if [ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]; then
             echo "Error: Tag ($TAG_VERSION) != pyproject ($PYPROJECT_VERSION)"
             exit 1
@@ -205,21 +195,19 @@ jobs:
           import zipfile, os
           wheels = [f for f in os.listdir('dist') if f.endswith('.whl')]
           if not wheels:
-              raise SystemExit('No wheel file found')
+            raise SystemExit('No wheel file found')
           wheel = os.path.join('dist', wheels[0])
           with zipfile.ZipFile(wheel, 'r') as z:
-              files = z.namelist()
-              print('Wheel contents:')
-              for f in sorted(files): print(' ', f)
-              if not any(f.startswith('tfunify/') and f.endswith('.py') for f in files):
-                  raise SystemExit('No tfunify Python files found in wheel')
+            files = z.namelist()
+            print('Wheel contents:')
+            for f in sorted(files): print(' ', f)
+            if not any(f.startswith('tfunify/') and f.endswith('.py') for f in files):
+              raise SystemExit('No tfunify Python files found in wheel')
           PY
 
       - name: Test installation from wheel
         run: |
-
           set -euo pipefail
-
           python -m venv test_env
           source test_env/bin/activate
           pip install --upgrade pip
@@ -230,9 +218,7 @@ jobs:
           print(f'tfunify version: {tfunify.__version__}')
           np.random.seed(42)
           prices = 100 * np.cumprod(1 + 0.01 * np.random.randn(100))
-
           pnl, *_ = EuropeanTF(EuropeanTFConfig(span_long=20, span_short=5)).run_from_prices(prices)
-
           print(f'Test run successful, PnL shape: {pnl.shape}')
           PY
           deactivate
@@ -255,7 +241,6 @@ jobs:
           release_name: Release ${{ github.ref_name }}
           body: |
             ## Changes in this release
-
             See [CHANGELOG.md](CHANGELOG.md) for details.
 
             ## Installation
@@ -266,6 +251,5 @@ jobs:
             ## Verification
             - Python 3.10, 3.11, 3.12
             - Unit + CLI tests passed
-
           draft: false
           prerelease: false
