@@ -2,8 +2,13 @@
 repository:
   name: tfunify
   description: "Unified trend-following systems in pure NumPy"
-  homepage: https://github.com/diogoribeiro7/tfunify
-  topics: trend-following, momentum, cta, quant, timeseries
+  homepage: https://github.com/DiogoRibeiro7/tfunify
+  topics:
+    - trend-following
+    - momentum
+    - cta
+    - quant
+    - timeseries
   private: false
   has_issues: true
   has_projects: false
@@ -11,22 +16,19 @@ repository:
   has_downloads: true
   default_branch: develop
 
-# Branch protection rules
+# Branch protection rules (classic Branch Protection via settings.yml)
 branches:
   - name: main
     protection:
       required_status_checks:
         strict: true
-        contexts:
-          - "test (3.10)"
-          - "test (3.11)" 
-          - "test (3.12)"
-          - "CI / test"
-      enforce_admins: true
-      required_pull_request_reviews:
-        required_approving_review_count: 1
-        dismiss_stale_reviews: true
-        require_code_owner_reviews: false
+        checks:
+          - context: "CI / test (3.10)"
+          - context: "CI / test (3.11)"
+          - context: "CI / test (3.12)"
+          - context: "CI / integration-test"
+      enforce_admins: false
+      required_pull_request_reviews: null
       restrictions: null
       allow_force_pushes: false
       allow_deletions: false
@@ -35,11 +37,14 @@ branches:
     protection:
       required_status_checks:
         strict: true
-        contexts:
-          - "test (3.11)"
-          - "CI / test"
-      enforce_admins: true
+        checks:
+          - context: "CI / test (3.10)"
+          - context: "CI / test (3.11)"
+          - context: "CI / test (3.12)"
+          - context: "CI / integration-test"
+      enforce_admins: false
       required_pull_request_reviews: null
       restrictions: null
       allow_force_pushes: false
       allow_deletions: false
+
