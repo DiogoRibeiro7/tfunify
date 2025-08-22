@@ -41,6 +41,7 @@ jobs:
           if [ "$TAG_COMMIT" = "$MAIN_COMMIT" ]; then
             echo "✅ Tag points to the latest main commit"
           else
+
             echo "⚠️  Warning: Tag does not point to the latest main commit"
           fi
 
@@ -62,21 +63,24 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install Poetry
-        uses: abatilo/actions-poetry@v3
+        uses: abatilo/actions-poetry@v
         with:
           poetry-version: "1.8.3"
 
       - name: Configure Poetry + Install
         run: |
           set -euo pipefail
+
           poetry config virtualenvs.prefer-active-python true
           poetry env use "$(python -c 'import sys; print(sys.executable)')"
           poetry install --with dev --no-interaction --no-ansi
 
       - name: Lint
+
         run: |
           poetry run ruff check .
           poetry run ruff format --check .
+
 
       - name: Type check
         run: poetry run mypy tfunify
@@ -100,11 +104,13 @@ jobs:
 
       - name: Install Poetry
         uses: abatilo/actions-poetry@v3
+
         with:
           poetry-version: "1.8.3"
 
       - name: Configure Poetry + Install
         run: |
+
           set -euo pipefail
           poetry config virtualenvs.prefer-active-python true
           poetry env use "$(python -c 'import sys; print(sys.executable)')"
@@ -123,6 +129,7 @@ jobs:
               for i, p in enumerate(prices):
                   w.writerow([f'2023-{(i%12)+1:02d}-{(i%28)+1:02d}', f'{p:.2f}'])
           PY
+
 
       - name: Run CLI commands
         run: |
@@ -210,7 +217,9 @@ jobs:
 
       - name: Test installation from wheel
         run: |
+
           set -euo pipefail
+
           python -m venv test_env
           source test_env/bin/activate
           pip install --upgrade pip
@@ -221,7 +230,9 @@ jobs:
           print(f'tfunify version: {tfunify.__version__}')
           np.random.seed(42)
           prices = 100 * np.cumprod(1 + 0.01 * np.random.randn(100))
+
           pnl, *_ = EuropeanTF(EuropeanTFConfig(span_long=20, span_short=5)).run_from_prices(prices)
+
           print(f'Test run successful, PnL shape: {pnl.shape}')
           PY
           deactivate
@@ -244,6 +255,7 @@ jobs:
           release_name: Release ${{ github.ref_name }}
           body: |
             ## Changes in this release
+
             See [CHANGELOG.md](CHANGELOG.md) for details.
 
             ## Installation
@@ -254,5 +266,6 @@ jobs:
             ## Verification
             - Python 3.10, 3.11, 3.12
             - Unit + CLI tests passed
+
           draft: false
           prerelease: false
