@@ -1,64 +1,102 @@
-name: Release
+name: Release (manual, workflow creates the tag)
 
 on:
-  push:
-    branches: [ main ]           # run tests on pushes to main
-    tags: [ "v*.*.*" ]           # full release only on version tags
-  workflow_dispatch: {}          # allow manual run
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g., 0.1.2). Leave empty to use pyproject version."
+        required: false
+        type: string
 
 permissions:
-  contents: write
+  contents: write   # needed to push tags and create the GitHub Release
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  verify-branch:
-    name: Verify release tag is on main
-    if: startsWith(github.ref, 'refs/tags/')   # only for tag events
+  prep:
+    name: Prepare release (resolve version & target commit)
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      sha: ${{ steps.meta.outputs.sha }}
     steps:
-      - name: Checkout code
+      - name: Checkout main (read-only)
         uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
 
-      - name: Verify tag ancestry and recency (no tag fetch)
+      - name: Set up Python 3.11 (for tomllib)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Determine version and target commit
+        id: meta
         run: |
           set -euo pipefail
-          # Fetch only branch heads; avoid tags to prevent clobber errors
-          git fetch --prune --no-tags origin +refs/heads/*:refs/remotes/origin/*
 
-          echo "GITHUB_REF=$GITHUB_REF"
-          echo "GITHUB_REF_NAME=$GITHUB_REF_NAME"
-          echo "GITHUB_SHA=$GITHUB_SHA"
-
-          # The commit the tag points to
-          TAG_COMMIT="$GITHUB_SHA"
-          echo "Tag commit: $TAG_COMMIT"
-
-          # Ensure the tag commit is contained in main
-          if git merge-base --is-ancestor "$TAG_COMMIT" origin/main; then
-            echo "✅ Tag commit is contained in main"
+          # Resolve the version to release
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
           else
-            echo "❌ Error: Tag commit is not on main"
+            python - <<'PY'
+            import sys, tomllib
+            with open("pyproject.toml","rb") as f:
+                data = tomllib.load(f)
+            v = data["tool"]["poetry"]["version"]
+            print(v)
+            PY
+            VERSION="$(python - <<'PY'
+import tomllib, sys
+print(tomllib.load(open("pyproject.toml","rb"))["tool"]["poetry"]["version"])
+PY
+)"
+          fi
+
+          # Sanity check: simple semver (major.minor.patch)
+          case "$VERSION" in
+            [0-9]*.[0-9]*.[0-9]*) : ;;
+            *) echo "Invalid version '$VERSION'. Use e.g. 0.1.2 or provide 'version' input."; exit 1 ;;
+          esac
+
+          # Record the main tip SHA now; all jobs will use this exact commit
+          SHA="$(git rev-parse HEAD)"
+
+          TAG="v${VERSION}"
+
+          echo "Resolved version: $VERSION"
+          echo "Tag to create   : $TAG"
+          echo "Target commit   : $SHA"
+
+          # Fail early if the tag already exists on the remote
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
+            echo "Remote tag $TAG already exists. Choose a new version or delete the tag first."
             exit 1
           fi
 
-          # Warn if tag isn't the tip of main
-          MAIN_COMMIT="$(git rev-parse origin/main)"
-          echo "Main commit: $MAIN_COMMIT"
-          if [ "$TAG_COMMIT" = "$MAIN_COMMIT" ]; then
-            echo "✅ Tag points to the latest main commit"
-          else
-            echo "⚠️  Warning: Tag does not point to the latest main commit"
-          fi
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "sha=$SHA"
+          } >> "$GITHUB_OUTPUT"
 
   test:
-    name: Run tests
+    name: Test suite (matrix)
     runs-on: ubuntu-latest
+    needs: prep
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout exact release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prep.outputs.sha }}
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -70,7 +108,7 @@ jobs:
         with:
           poetry-version: "1.8.3"
 
-      - name: Configure Poetry + Install
+      - name: Install (dev)
         run: |
           set -euo pipefail
           poetry config virtualenvs.prefer-active-python true
@@ -91,8 +129,12 @@ jobs:
   test-cli:
     name: Test CLI functionality
     runs-on: ubuntu-latest
+    needs: prep
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout exact release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prep.outputs.sha }}
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -104,7 +146,7 @@ jobs:
         with:
           poetry-version: "1.8.3"
 
-      - name: Configure Poetry + Install
+      - name: Install
         run: |
           set -euo pipefail
           poetry config virtualenvs.prefer-active-python true
@@ -145,17 +187,50 @@ jobs:
                   ok = False
                   print(f'Validation failed for {system}: {e}', file=sys.stderr)
           if not ok:
-            raise SystemExit(1)
+              raise SystemExit(1)
           print('All CLI tests passed!')
           PY
 
-  build-publish:
-    name: Build and publish to PyPI
-    if: startsWith(github.ref, 'refs/tags/')   # only for tag events
+  tag:
+    name: Create and push tag
     runs-on: ubuntu-latest
-    needs: [verify-branch, test, test-cli]
+    needs: [prep, test, test-cli]
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout exact release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prep.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: true   # required to push tags with GITHUB_TOKEN
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create and push tag ${{ needs.prep.outputs.tag }}
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.prep.outputs.tag }}"
+          SHA="${{ needs.prep.outputs.sha }}"
+          # Double-check tag doesn't exist remotely
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
+            echo "Remote tag $TAG already exists. Aborting."
+            exit 1
+          fi
+          # Create annotated tag at the exact SHA captured in prep
+          git tag -a "$TAG" -m "Release $TAG" "$SHA"
+          git push origin "refs/tags/$TAG"
+
+  build-publish:
+    name: Build, publish to PyPI, and create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [prep, tag]
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prep.outputs.sha }}
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -167,17 +242,16 @@ jobs:
         with:
           poetry-version: "1.8.3"
 
-      - name: Verify version tag matches pyproject
+      - name: Verify pyproject version matches ${{ needs.prep.outputs.version }}
         run: |
           set -euo pipefail
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          echo "Tag version: $TAG_VERSION"
-          poetry config virtualenvs.prefer-active-python true
-          poetry env use "$(python -c 'import sys; print(sys.executable)')"
-          PYPROJECT_VERSION="$(poetry version -s)"
-          echo "pyproject version: $PYPROJECT_VERSION"
-          if [ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]; then
-            echo "Error: Tag ($TAG_VERSION) != pyproject ($PYPROJECT_VERSION)"
+          PYPROJECT_VERSION="$(python - <<'PY'
+          import tomllib
+          print(tomllib.load(open("pyproject.toml","rb"))["tool"]["poetry"]["version"])
+          PY
+          )"
+          if [ "$PYPROJECT_VERSION" != "${{ needs.prep.outputs.version }}" ]; then
+            echo "pyproject version ($PYPROJECT_VERSION) != planned release (${{ needs.prep.outputs.version }})"
             exit 1
           fi
           echo "Version verification passed."
@@ -189,23 +263,7 @@ jobs:
           poetry build
           ls -la dist/
 
-      - name: Verify wheel contents
-        run: |
-          python - <<'PY'
-          import zipfile, os
-          wheels = [f for f in os.listdir('dist') if f.endswith('.whl')]
-          if not wheels:
-            raise SystemExit('No wheel file found')
-          wheel = os.path.join('dist', wheels[0])
-          with zipfile.ZipFile(wheel, 'r') as z:
-            files = z.namelist()
-            print('Wheel contents:')
-            for f in sorted(files): print(' ', f)
-            if not any(f.startswith('tfunify/') and f.endswith('.py') for f in files):
-              raise SystemExit('No tfunify Python files found in wheel')
-          PY
-
-      - name: Test installation from wheel
+      - name: Smoke test wheel install
         run: |
           set -euo pipefail
           python -m venv test_env
@@ -228,28 +286,26 @@ jobs:
           POETRY_PYPI_TOKEN_PYPI: ${{ secrets.PYPI_API_TOKEN }}
         run: poetry publish --username __token__ --password "$POETRY_PYPI_TOKEN_PYPI"
 
-      - name: Compute release version (strip leading v)
-        id: version
-        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
       - name: Create GitHub Release
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref_name }}
+          tag_name: ${{ needs.prep.outputs.tag }}
+          release_name: Release ${{ needs.prep.outputs.tag }}
           body: |
             ## Changes in this release
-            See [CHANGELOG.md](CHANGELOG.md) for details.
+
+            See [CHANGELOG.md](CHANGELOG.md).
 
             ## Installation
             ```bash
-            pip install tfunify==${{ steps.version.outputs.value }}
+            pip install tfunify==${{ needs.prep.outputs.version }}
             ```
 
-            ## Verification
+            ## Verified
             - Python 3.10, 3.11, 3.12
             - Unit + CLI tests passed
           draft: false
           prerelease: false
+
