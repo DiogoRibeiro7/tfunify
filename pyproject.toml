@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "tfunify"
-version = "0.1.0"
+version = "0.1.3"
 description = "Unified trend-following systems: European (EWMA), American (breakout+ATR), and TSMOM in NumPy."
 authors = ["Diogo Ribeiro <diogo.debastos.ribeiro@gmail.com>"]
 license = "MIT"
