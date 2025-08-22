@@ -3,41 +3,45 @@ name: Release
 on:
   push:
     tags:
-      - "v*.*.*"
-    branches:
-      - main  # Only run releases from main branch
+      - "v*.*.*"   # release only on version tags
 
 jobs:
   verify-branch:
-    name: Verify release is from main branch
+    name: Verify release tag is on main
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Verify tag is on main branch
+
+      - name: Verify tag ancestry and recency
         run: |
-          # Ensure remote refs exist
+          # Ensure remote refs & tags are present
           git fetch origin +refs/heads/*:refs/remotes/origin/* --tags
 
-          TAG_COMMIT=$(git rev-list -n 1 "$GITHUB_REF")
+          echo "GITHUB_REF=$GITHUB_REF"
+          echo "GITHUB_REF_NAME=$GITHUB_REF_NAME"
+
+          # Commit pointed to by the tag
+          TAG_COMMIT="$(git rev-list -n 1 "$GITHUB_REF")"
           echo "Tag commit: $TAG_COMMIT"
 
+          # Ensure the tag commit is on main
           if git merge-base --is-ancestor "$TAG_COMMIT" origin/main; then
-            echo "✅ Tag is on main branch"
+            echo "✅ Tag commit is contained in main"
           else
-            echo "❌ Error: Tag is not on main branch"
+            echo "❌ Error: Tag commit is not on main"
             exit 1
           fi
 
-          MAIN_COMMIT=$(git rev-parse origin/main)
+          # Warn if tag isn't the tip of main
+          MAIN_COMMIT="$(git rev-parse origin/main)"
           echo "Main commit: $MAIN_COMMIT"
-
           if [ "$TAG_COMMIT" = "$MAIN_COMMIT" ]; then
-            echo "✅ Tag points to latest main commit"
+            echo "✅ Tag points to the latest main commit"
           else
-            echo "⚠️  Tag is not the latest main commit"
+            echo "⚠️  Warning: Tag does not point to the latest main commit"
           fi
 
   test:
@@ -47,58 +51,66 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
-      - uses: abatilo/actions-poetry@v3
+      - name: Install Poetry
+        uses: abatilo/actions-poetry@v3
         with:
           poetry-version: "1.8.3"
 
       - name: Configure Poetry + Install
         run: |
-          set -e
+          set -euo pipefail
           poetry config virtualenvs.prefer-active-python true
           poetry env use "$(python -c 'import sys; print(sys.executable)')"
           poetry install --with dev --no-interaction --no-ansi
 
-      - name: Run linting
+      - name: Lint
         run: |
           poetry run ruff check .
           poetry run ruff format --check .
 
-      - name: Run type checking
+      - name: Type check
         run: poetry run mypy tfunify
 
-      - name: Run unit tests
+      - name: Unit tests
         run: poetry run pytest --cov=tfunify --cov-report=term-missing --cov-fail-under=80
 
   test-cli:
-    name: Test CLI functionality before release
+    name: Test CLI functionality
     runs-on: ubuntu-latest
     needs: verify-branch
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - uses: abatilo/actions-poetry@v3
+
+      - name: Install Poetry
+        uses: abatilo/actions-poetry@v3
         with:
           poetry-version: "1.8.3"
 
       - name: Configure Poetry + Install
         run: |
-          set -e
+          set -euo pipefail
           poetry config virtualenvs.prefer-active-python true
           poetry env use "$(python -c 'import sys; print(sys.executable)')"
           poetry install --no-interaction --no-ansi
-          # If numpy is only a main dependency, this suffices.
-          # If it's optional, uncomment the next line:
-          # poetry run pip install numpy
 
-      - name: Create test data (inside Poetry env)
+      - name: Create test data (NumPy inside Poetry venv)
         run: |
           poetry run python - <<'PY'
           import numpy as np, csv
@@ -112,13 +124,13 @@ jobs:
                   w.writerow([f'2023-{(i%12)+1:02d}-{(i%28)+1:02d}', f'{p:.2f}'])
           PY
 
-      - name: Test all CLI commands
+      - name: Run CLI commands
         run: |
           poetry run tfu european --csv test_data.csv --span-long 50 --span-short 10
           poetry run tfu american --csv test_data.csv --span-long 50 --span-short 10 --atr-period 20
           poetry run tfu tsmom --csv test_data.csv --L 5 --M 8
 
-      - name: Verify output files exist and are valid (inside Poetry env)
+      - name: Validate artifacts
         run: |
           poetry run python - <<'PY'
           import numpy as np, sys
@@ -140,42 +152,55 @@ jobs:
     name: Build and publish to PyPI
     runs-on: ubuntu-latest
     needs: [verify-branch, test, test-cli]
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - uses: abatilo/actions-poetry@v3
+
+      - name: Install Poetry
+        uses: abatilo/actions-poetry@v3
         with:
           poetry-version: "1.8.3"
 
-      - name: Verify version tag
+      - name: Verify version tag matches pyproject
         run: |
-          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+          set -euo pipefail
+          # Strip leading 'v' from tag name to get semver
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
           echo "Tag version: $TAG_VERSION"
+
           poetry config virtualenvs.prefer-active-python true
           poetry env use "$(python -c 'import sys; print(sys.executable)')"
-          PYPROJECT_VERSION=$(poetry version --short)
-          echo "Pyproject version: $PYPROJECT_VERSION"
+          PYPROJECT_VERSION="$(poetry version --short)"
+          echo "pyproject version: $PYPROJECT_VERSION"
+
           if [ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]; then
-            echo "Error: Tag version ($TAG_VERSION) doesn't match pyproject.toml version ($PYPROJECT_VERSION)"
+            echo "Error: Tag ($TAG_VERSION) != pyproject ($PYPROJECT_VERSION)"
             exit 1
           fi
-          echo "Version verification passed!"
+          echo "Version verification passed."
 
       - name: Build package
         run: |
+          set -euo pipefail
           poetry install --no-root --no-interaction --no-ansi
           poetry build
-
-      - name: Verify build
-        run: |
           ls -la dist/
+
+      - name: Verify wheel contents
+        run: |
           python - <<'PY'
-          import zipfile, os, glob
+          import zipfile, os
           wheels = [f for f in os.listdir('dist') if f.endswith('.whl')]
-          if not wheels: raise SystemExit('No wheel file found')
-          with zipfile.ZipFile(os.path.join('dist', wheels[0]), 'r') as z:
+          if not wheels:
+              raise SystemExit('No wheel file found')
+          wheel = os.path.join('dist', wheels[0])
+          with zipfile.ZipFile(wheel, 'r') as z:
               files = z.namelist()
               print('Wheel contents:')
               for f in sorted(files): print(' ', f)
@@ -185,6 +210,7 @@ jobs:
 
       - name: Test installation from wheel
         run: |
+          set -euo pipefail
           python -m venv test_env
           source test_env/bin/activate
           pip install --upgrade pip
@@ -195,8 +221,7 @@ jobs:
           print(f'tfunify version: {tfunify.__version__}')
           np.random.seed(42)
           prices = 100 * np.cumprod(1 + 0.01 * np.random.randn(100))
-          cfg = EuropeanTFConfig(span_long=20, span_short=5)
-          pnl, *_ = EuropeanTF(cfg).run_from_prices(prices)
+          pnl, *_ = EuropeanTF(EuropeanTFConfig(span_long=20, span_short=5)).run_from_prices(prices)
           print(f'Test run successful, PnL shape: {pnl.shape}')
           PY
           deactivate
@@ -206,21 +231,28 @@ jobs:
           POETRY_PYPI_TOKEN_PYPI: ${{ secrets.PYPI_API_TOKEN }}
         run: poetry publish --username __token__ --password "$POETRY_PYPI_TOKEN_PYPI"
 
+      - name: Compute release version (strip leading v)
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
+          release_name: Release ${{ github.ref_name }}
           body: |
             ## Changes in this release
-            See [CHANGELOG.md](CHANGELOG.md) for detailed changes.
+            See [CHANGELOG.md](CHANGELOG.md) for details.
 
             ## Installation
             ```bash
-            # strip the leading 'v' in the tag name
-            pip install tfunify==${{ github.ref_name/*v/ }}
+            pip install tfunify==${{ steps.version.outputs.value }}
             ```
+
+            ## Verification
+            - Python 3.10, 3.11, 3.12
+            - Unit + CLI tests passed
           draft: false
           prerelease: false
