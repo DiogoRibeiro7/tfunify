@@ -1,27 +1,51 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 import numpy as np
 from numpy.typing import NDArray
-from .core import span_to_nu, ewma_variance_preserving
+
+from .core import ewma_variance_preserving, span_to_nu
 
 FloatArray = NDArray[np.floating]
 
 
 def _true_range(high: FloatArray, low: FloatArray, close: FloatArray) -> FloatArray:
-    """Calculate True Range: max(H-L, |H-C_prev|, |L-C_prev|)."""
+    """
+    Calculate the True Range (TR) for a series of high, low, and close prices.
+    The True Range is defined as the maximum of:
+        - The current high minus the current low,
+        - The absolute value of the current high minus the previous close,
+        - The absolute value of the current low minus the previous close.
+    Parameters
+    ----------
+    high : FloatArray
+        Array-like sequence of high prices.
+    low : FloatArray
+        Array-like sequence of low prices.
+    close : FloatArray
+        Array-like sequence of close prices.
+    Returns
+    -------
+    FloatArray
+        Array of true range values for each period.
+    Raises
+    ------
+    ValueError
+        If input arrays do not have the same shape or if any high price is
+        less than the corresponding low price.
+    """
     high = np.asarray(high, dtype=float)
     low = np.asarray(low, dtype=float)
     close = np.asarray(close, dtype=float)
-    
+
     if not (high.shape == low.shape == close.shape):
         raise ValueError("high, low, and close must have same shape")
     if np.any(high < low):
         raise ValueError("high prices cannot be less than low prices")
-        
-    prev_close = np.roll(close, 1)
-    prev_close[0] = close[0]
-    hl = np.abs(high - low)
+
+    prev_close = np.concatenate([[close[0]], close[:-1]])
+    hl = high - low
     hc = np.abs(high - prev_close)
     lc = np.abs(low - prev_close)
     return np.maximum(hl, np.maximum(hc, lc))
@@ -31,7 +55,7 @@ def _atr(high: FloatArray, low: FloatArray, close: FloatArray, period: int) -> F
     """Calculate Average True Range using simple moving average."""
     if period < 1:
         raise ValueError("ATR period must be >= 1")
-        
+
     tr = _true_range(high, low, close)
     n = tr.size
     out = np.full(n, np.nan, dtype=float)
@@ -44,6 +68,7 @@ def _atr(high: FloatArray, low: FloatArray, close: FloatArray, period: int) -> F
 @dataclass
 class AmericanTFConfig:
     """Configuration for American trend-following system."""
+
     span_long: int = 250
     span_short: int = 20
     atr_period: int = 33
@@ -72,27 +97,27 @@ class AmericanTFConfig:
 class AmericanTF:
     """
     American TF: fast/slow filters on price with ATR buffers + trailing stop.
-    
+
     This system uses fast and slow exponential moving averages with Average True Range
     (ATR) buffers to generate entry signals, combined with trailing stops for exits.
-    
+
     Parameters
     ----------
     cfg : AmericanTFConfig
         Configuration object with system parameters
-        
+
     Examples
     --------
     >>> import numpy as np
     >>> from tfunify.american import AmericanTF, AmericanTFConfig
-    >>> 
+    >>>
     >>> # Generate sample OHLC data
     >>> np.random.seed(0)
     >>> n = 1000
     >>> close = 100 + np.cumsum(0.01 * np.random.randn(n))
     >>> high = close * (1 + 0.01 * np.abs(np.random.randn(n)))
     >>> low = close * (1 - 0.01 * np.abs(np.random.randn(n)))
-    >>> 
+    >>>
     >>> # Configure and run system
     >>> cfg = AmericanTFConfig(
     ...     span_long=50,
@@ -109,10 +134,12 @@ class AmericanTF:
     def __init__(self, cfg: AmericanTFConfig) -> None:
         self.cfg = cfg
 
-    def run(self, close: FloatArray, high: FloatArray | None = None, low: FloatArray | None = None) -> tuple[FloatArray, FloatArray]:
+    def run(
+        self, close: FloatArray, high: FloatArray | None = None, low: FloatArray | None = None
+    ) -> tuple[FloatArray, FloatArray]:
         """
         Run the American TF system.
-        
+
         Parameters
         ----------
         close : FloatArray
@@ -121,13 +148,13 @@ class AmericanTF:
             High prices. If None, uses close prices
         low : FloatArray, optional
             Low prices. If None, uses close prices
-            
+
         Returns
         -------
         tuple[FloatArray, FloatArray]
             - pnl: Daily P&L
             - units: Position sizes in units
-            
+
         Raises
         ------
         ValueError
@@ -136,7 +163,7 @@ class AmericanTF:
         close = np.asarray(close, dtype=float)
         if close.size == 0:
             raise ValueError("Close prices cannot be empty")
-            
+
         if high is None or low is None:
             high = low = close
         else:
@@ -151,11 +178,12 @@ class AmericanTF:
         s_long = ewma_variance_preserving(close, nu_long)
         s_fast = ewma_variance_preserving(close, nu_short)
 
+        # Rest of implementation...
         n = close.size
         units = np.zeros(n)
         pnl = np.zeros(n)
         stop = np.full(n, np.nan)
-        in_pos = 0  # -1, 0, +1
+        in_pos = 0
 
         for t in range(1, n):
             price = close[t]
@@ -169,9 +197,13 @@ class AmericanTF:
             short_on = s_fast[t] < s_long[t] - self.cfg.q * atr_t
 
             if in_pos > 0:
-                stop[t] = max(stop[t - 1] if np.isfinite(stop[t - 1]) else -np.inf, price - self.cfg.p * atr_t)
+                stop[t] = max(
+                    stop[t - 1] if np.isfinite(stop[t - 1]) else -np.inf, price - self.cfg.p * atr_t
+                )
             elif in_pos < 0:
-                stop[t] = min(stop[t - 1] if np.isfinite(stop[t - 1]) else np.inf, price + self.cfg.p * atr_t)
+                stop[t] = min(
+                    stop[t - 1] if np.isfinite(stop[t - 1]) else np.inf, price + self.cfg.p * atr_t
+                )
             else:
                 stop[t] = np.nan
 
