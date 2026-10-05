@@ -1,473 +1,395 @@
+"""European system against the literal definition, and its invariances."""
+
+from __future__ import annotations
+
+import dataclasses
+import math
+
 import numpy as np
 import pytest
-from tfunify.european import EuropeanTF, EuropeanTFConfig
-from tfunify.core import pct_returns_from_prices
+
+from tests import reference
+from tfunify import (
+    EuropeanTF,
+    EuropeanTFConfig,
+    EuropeanTFResult,
+    ewma_volatility_from_returns,
+    pct_returns_from_prices,
+    span_to_nu,
+)
 
 
-class TestEuropeanTFConfig:
-    """Comprehensive tests for EuropeanTFConfig validation."""
-
-    def test_default_configuration(self):
-        """Test default configuration is valid."""
-        cfg = EuropeanTFConfig()
-        assert cfg.sigma_target_annual == 0.15
-        assert cfg.a == 260
-        assert cfg.span_sigma == 33
-        assert cfg.mode == "longshort"
-        assert cfg.span_long == 250
-        assert cfg.span_short == 20
-
-    def test_sigma_target_validation(self):
-        """Test sigma_target_annual validation."""
-        # Valid values
-        EuropeanTFConfig(sigma_target_annual=0.01)
-        EuropeanTFConfig(sigma_target_annual=0.5)
-        EuropeanTFConfig(sigma_target_annual=1.0)
-
-        # Invalid values
-        with pytest.raises(ValueError, match="sigma_target_annual must be positive"):
-            EuropeanTFConfig(sigma_target_annual=0.0)
-        with pytest.raises(ValueError, match="sigma_target_annual must be positive"):
-            EuropeanTFConfig(sigma_target_annual=-0.1)
-
-    def test_trading_days_validation(self):
-        """Test trading days per year validation."""
-        # Valid values
-        EuropeanTFConfig(a=252)
-        EuropeanTFConfig(a=365)
-        EuropeanTFConfig(a=1)
-
-        # Invalid values
-        with pytest.raises(ValueError, match="a \\(trading days per year\\) must be positive"):
-            EuropeanTFConfig(a=0)
-        with pytest.raises(ValueError, match="a \\(trading days per year\\) must be positive"):
-            EuropeanTFConfig(a=-252)
-
-    def test_span_validation(self):
-        """Test span parameter validation."""
-        # Valid spans
-        EuropeanTFConfig(span_sigma=1, span_long=10, span_short=5)
-        EuropeanTFConfig(span_sigma=100, span_long=500, span_short=50)
-
-        # Invalid spans
-        with pytest.raises(ValueError, match="span_sigma must be >= 1"):
-            EuropeanTFConfig(span_sigma=0)
-        with pytest.raises(ValueError, match="span_long must be >= 1"):
-            EuropeanTFConfig(span_long=0)
-        with pytest.raises(ValueError, match="span_short must be >= 1"):
-            EuropeanTFConfig(span_short=0)
-
-    def test_mode_validation(self):
-        """Test mode parameter validation."""
-        # Valid modes
-        EuropeanTFConfig(mode="single")
-        EuropeanTFConfig(mode="longshort")
-
-        # Invalid modes
-        with pytest.raises(ValueError, match="mode must be 'single' or 'longshort'"):
-            EuropeanTFConfig(mode="invalid")
-        with pytest.raises(ValueError, match="mode must be 'single' or 'longshort'"):
-            EuropeanTFConfig(mode="SINGLE")  # Case sensitive
-
-    def test_longshort_span_consistency(self):
-        """Test span consistency in longshort mode."""
-        # Valid: short < long
-        EuropeanTFConfig(mode="longshort", span_short=20, span_long=100)
-
-        # Invalid: short >= long
-        with pytest.raises(ValueError, match="span_short must be less than span_long"):
-            EuropeanTFConfig(mode="longshort", span_short=100, span_long=50)
-        with pytest.raises(ValueError, match="span_short must be less than span_long"):
-            EuropeanTFConfig(mode="longshort", span_short=50, span_long=50)
-
-    def test_single_mode_span_flexibility(self):
-        """Test that single mode doesn't require span ordering."""
-        # Should be valid even if span_short > span_long in single mode
-        EuropeanTFConfig(mode="single", span_short=100, span_long=50)
+@pytest.fixture
+def rng():
+    return np.random.default_rng(4107)
 
 
-class TestEuropeanTF:
-    """Comprehensive tests for EuropeanTF system."""
+def returns(rng, n=400, vol=0.012, drift=0.0003):
+    return drift + vol * rng.standard_normal(n)
 
-    def setup_method(self):
-        np.random.seed(42)
-        self.n = 1000
 
-        # Generate realistic log returns directly
-        drift = 0.0002  # ~5% annual
-        vol = 0.015  # ~24% annual
-        self.returns = drift + vol * np.random.randn(self.n)
-        self.returns[0] = 0.0  # First return is zero
+CONFIGS = [
+    EuropeanTFConfig(mode="single", span_long=30, span_sigma=12),
+    EuropeanTFConfig(mode="longshort", span_long=60, span_short=8, span_sigma=20),
+    EuropeanTFConfig(mode="longshort", span_long=15, span_short=3, span_sigma=5, warmup=2),
+    EuropeanTFConfig(mode="single", span_long=10, span_sigma=7.5, sigma_target_annual=0.3, a=252),
+]
 
-        # Convert to prices using log return relationship
-        self.prices = 100 * np.exp(np.cumsum(self.returns))
 
-    def test_single_mode_basic(self):
-        """Test basic single mode functionality."""
-        cfg = EuropeanTFConfig(sigma_target_annual=0.12, span_sigma=20, mode="single", span_long=50)
-        system = EuropeanTF(cfg)
-        pnl, weights, signal, volatility = system.run_from_prices(self.prices)
-
-        # Basic shape and finite checks
-        assert len(pnl) == len(self.prices)
-        assert len(weights) == len(self.prices)
-        assert len(signal) == len(self.prices)
-        assert len(volatility) == len(self.prices)
-
-        # After warmup, values should be finite
-        warmup = max(cfg.span_sigma, cfg.span_long) + 10
-        assert np.isfinite(pnl[warmup:]).all()
-        assert np.isfinite(weights[warmup:]).all()
-        assert np.isfinite(signal[warmup:]).all()
-        assert np.isfinite(volatility[warmup:]).all()
-
-    def test_longshort_mode_basic(self):
-        """Test basic longshort mode functionality."""
-        cfg = EuropeanTFConfig(
-            sigma_target_annual=0.15, span_sigma=30, mode="longshort", span_long=100, span_short=10
+class TestDefinition:
+    @pytest.mark.parametrize("cfg", CONFIGS)
+    def test_matches_the_definition_evaluated_with_explicit_sums(self, rng, cfg):
+        r = returns(rng)
+        result = EuropeanTF(cfg).run_from_returns(r)
+        pnl, weights, signal, sigma = reference.european(
+            r,
+            target=cfg.sigma_target_annual,
+            a=cfg.a,
+            span_sigma=cfg.span_sigma,
+            span_long=cfg.span_long,
+            span_short=cfg.span_short if cfg.mode == "longshort" else None,
+            warmup=cfg.warmup,
         )
-        system = EuropeanTF(cfg)
-        pnl, weights, signal, volatility = system.run_from_prices(self.prices)
+        np.testing.assert_allclose(result.volatility, sigma, rtol=1e-10)
+        np.testing.assert_allclose(result.signal, signal, rtol=1e-9, atol=1e-11)
+        np.testing.assert_allclose(result.weights, weights, rtol=1e-9, atol=1e-11)
+        np.testing.assert_allclose(result.pnl, pnl, rtol=1e-9, atol=1e-13)
 
-        # Basic checks
-        assert len(pnl) == len(self.prices)
-        warmup = max(cfg.span_sigma, cfg.span_long) + 10
-        assert np.isfinite(pnl[warmup:]).all()
+    def test_daily_return_is_the_signal_times_the_normalised_return(self, rng):
+        # eq. (4.3): f_t = (target / sqrt(a)) S_{t-1} z_t
+        cfg = EuropeanTFConfig(span_long=40, span_short=6, span_sigma=15)
+        r = returns(rng)
+        result = EuropeanTF(cfg).run_from_returns(r)
+        sigma = result.volatility
+        z = np.zeros_like(r)
+        ok = np.isfinite(sigma[:-1])
+        z[1:][ok] = r[1:][ok] / sigma[:-1][ok]
+        expected = cfg.sigma_target_annual / math.sqrt(cfg.a) * result.signal[:-1] * z[1:]
+        np.testing.assert_allclose(result.pnl[1:], expected, rtol=1e-10, atol=1e-15)
 
-        # Signal should have more variation in longshort mode
-        signal_std = np.std(signal[warmup:])
-        assert signal_std > 0
-
-    def test_run_from_returns_equivalence(self):
-        """Test that run_from_prices and run_from_returns give same results."""
-        cfg = EuropeanTFConfig()
-        system = EuropeanTF(cfg)
-
-        # Use the same returns for both methods to ensure consistency
-        returns = pct_returns_from_prices(self.prices)
-
-        pnl1, weights1, signal1, vol1 = system.run_from_prices(self.prices)
-        pnl2, weights2, signal2, vol2 = system.run_from_returns(returns)
-
-        # Results should be identical with proper tolerance for numerical precision
-        np.testing.assert_allclose(pnl1, pnl2, rtol=1e-12, atol=1e-15)
-        np.testing.assert_allclose(weights1, weights2, rtol=1e-12, atol=1e-15)
-        np.testing.assert_allclose(signal1, signal2, rtol=1e-12, atol=1e-15)
-        np.testing.assert_allclose(vol1, vol2, rtol=1e-12, atol=1e-15)
-
-    def test_volatility_targeting_mechanism(self):
-        """Test that volatility targeting mechanism works correctly."""
-        target_vol = 0.10
-        cfg = EuropeanTFConfig(
-            sigma_target_annual=target_vol, span_sigma=20, mode="single", span_long=50
+    def test_weight_is_signal_times_volatility_target(self, rng):
+        cfg = EuropeanTFConfig(span_long=40, span_short=6, span_sigma=15)
+        result = EuropeanTF(cfg).run_from_returns(returns(rng))
+        valid = np.isfinite(result.volatility)
+        np.testing.assert_allclose(
+            result.weights[valid],
+            result.signal[valid] * 0.15 / (math.sqrt(260) * result.volatility[valid]),
+            rtol=1e-12,
         )
-        system = EuropeanTF(cfg)
-        pnl, weights, signal, volatility = system.run_from_prices(self.prices)
 
-        # Test the internal mechanism with updated bounds
-        valid_indices = ~(np.isnan(weights) | np.isnan(signal) | np.isnan(volatility))
+    def test_default_configuration_is_the_one_of_the_paper(self):
+        cfg = EuropeanTF().cfg
+        assert (cfg.mode, cfg.span_long, cfg.span_short, cfg.span_sigma) == (
+            "longshort",
+            250,
+            20,
+            33,
+        )
+        assert (cfg.sigma_target_annual, cfg.a) == (0.15, 260)
+        assert cfg.sigma_floor_annual == 0.0
+        assert cfg.weight_cap is None
 
-        if np.sum(valid_indices) > 10:
-            # Verify the volatility targeting formula is applied correctly
-            # Account for signal normalization in the test
-            expected_vol_weights = target_vol / (
-                np.sqrt(cfg.a) * np.maximum(volatility[valid_indices], 0.005)
+
+class TestTiming:
+    @pytest.mark.parametrize("cfg", CONFIGS)
+    def test_results_do_not_depend_on_later_data(self, rng, cfg):
+        r = returns(rng, 300)
+        full = EuropeanTF(cfg).run_from_returns(r)
+        for cut in (40, 150, 299):
+            part = EuropeanTF(cfg).run_from_returns(r[:cut])
+            for name in ("pnl", "weights", "signal", "volatility"):
+                np.testing.assert_array_equal(getattr(part, name), getattr(full, name)[:cut])
+
+    def test_the_weight_of_a_day_earns_the_return_of_the_next(self, rng):
+        r = returns(rng)
+        result = EuropeanTF(CONFIGS[1]).run_from_returns(r)
+        assert result.pnl[0] == 0.0
+        np.testing.assert_allclose(result.pnl[1:], result.weights[:-1] * r[1:], rtol=1e-15)
+
+    def test_warmup(self, rng):
+        cfg = EuropeanTFConfig(span_long=30, span_short=5, span_sigma=10, warmup=25)
+        r = returns(rng, 200)
+        result = EuropeanTF(cfg).run_from_returns(r)
+        assert np.all(np.isnan(result.volatility[:24]))
+        assert np.all(np.isfinite(result.volatility[24:]))
+        # the first return that can be normalised is number 25 (index 25 uses sigma[24])
+        assert np.all(result.signal[:25] == 0.0)
+        assert np.all(result.weights[:25] == 0.0)
+        assert np.all(result.pnl[:26] == 0.0)
+        assert result.signal[26] != 0.0
+
+    def test_default_warmup_is_the_volatility_span(self):
+        assert EuropeanTFConfig(span_sigma=33).warmup_periods == 33
+        assert EuropeanTFConfig(span_sigma=7.2).warmup_periods == 8
+        assert EuropeanTFConfig(span_sigma=33, warmup=5).warmup_periods == 5
+
+
+class TestInvariances:
+    @pytest.mark.parametrize("cfg", CONFIGS[:2])
+    @pytest.mark.parametrize("scale", [1e-160, 1e-3, 0.2, 40.0, 1e160])
+    def test_scale_of_the_returns_does_not_matter(self, rng, cfg, scale):
+        # the signal is built from normalised returns and the weight is inversely
+        # proportional to the volatility: a quieter asset is simply levered more.
+        # (The two extreme scales are there for the arithmetic, not for a market.)
+        r = returns(rng, drift=0.0)
+        base = EuropeanTF(cfg).run_from_returns(r)
+        scaled = EuropeanTF(cfg).run_from_returns(scale * r)
+        np.testing.assert_allclose(scaled.signal, base.signal, rtol=1e-10, atol=1e-12)
+        np.testing.assert_allclose(scaled.pnl, base.pnl, rtol=1e-10, atol=1e-14)
+        np.testing.assert_allclose(scaled.weights * scale, base.weights, rtol=1e-10, atol=1e-12)
+
+    @pytest.mark.parametrize("cfg", CONFIGS[:2])
+    def test_mirrored_returns_mirror_the_position(self, rng, cfg):
+        r = returns(rng)
+        base = EuropeanTF(cfg).run_from_returns(r)
+        mirrored = EuropeanTF(cfg).run_from_returns(-r)
+        np.testing.assert_allclose(mirrored.signal, -base.signal, rtol=1e-12)
+        np.testing.assert_allclose(mirrored.weights, -base.weights, rtol=1e-12)
+        np.testing.assert_allclose(mirrored.pnl, base.pnl, rtol=1e-12)
+
+    def test_target_scales_the_position(self, rng):
+        r = returns(rng)
+        low = EuropeanTF(EuropeanTFConfig(span_long=30, span_short=5)).run_from_returns(r)
+        high = EuropeanTF(
+            EuropeanTFConfig(span_long=30, span_short=5, sigma_target_annual=0.30)
+        ).run_from_returns(r)
+        np.testing.assert_allclose(high.pnl, 2 * low.pnl, rtol=1e-12)
+        np.testing.assert_array_equal(high.signal, low.signal)
+
+
+class TestStatistics:
+    @pytest.mark.parametrize("mode", ["single", "longshort"])
+    @pytest.mark.parametrize("daily_vol", [0.0005, 0.01, 0.2])
+    def test_runs_at_its_target_on_white_noise(self, mode, daily_vol):
+        # A unit-variance signal times a unit-variance normalised return, were
+        # the volatility known. It is estimated from about 33 returns, and a
+        # return divided by an estimate has a standard deviation some 3 % above
+        # one: the signal comes out near 1.03 and the realised volatility near
+        # 1.06 times the target. The bounds are five standard errors wide.
+        rng = np.random.default_rng(99)
+        cfg = EuropeanTFConfig(mode=mode)
+        result = EuropeanTF(cfg).run_from_returns(daily_vol * rng.standard_normal(300_000))
+        realised = result.pnl[3000:].std() * math.sqrt(cfg.a)
+        assert 0.97 < realised / 0.15 < 1.16
+        assert 0.94 < result.signal[3000:].std() < 1.13
+        assert abs(result.signal[3000:].mean()) < 0.17
+
+    def test_makes_money_on_a_trend_and_loses_on_a_reversal(self):
+        cfg = EuropeanTFConfig(mode="single", span_long=20, span_sigma=10)
+        rng = np.random.default_rng(5)
+        noise = 0.002 * rng.standard_normal(600)
+        trend = EuropeanTF(cfg).run_from_returns(0.01 + noise)
+        assert trend.signal[100:].min() > 3.0  # about sqrt(20) times a normalised return of one
+        assert trend.pnl[100:].sum() > 0.0
+        # alternating days: yesterday's direction is always wrong
+        zigzag = 0.01 * np.where(np.arange(600) % 2 == 0, 1.0, -1.0)
+        assert (
+            EuropeanTF(EuropeanTFConfig(mode="single", span_long=1.5))
+            .run_from_returns(zigzag)
+            .pnl.sum()
+            < 0.0
+        )
+
+
+class TestPrices:
+    def test_prices_are_turned_into_simple_returns(self, rng):
+        prices = 80 * np.cumprod(1 + returns(rng, 300))
+        cfg = CONFIGS[1]
+        from_prices = EuropeanTF(cfg).run_from_prices(prices)
+        from_returns = EuropeanTF(cfg).run_from_returns(pct_returns_from_prices(prices)[1:])
+        assert from_prices.pnl.shape == prices.shape
+        assert from_prices.pnl[0] == 0.0
+        assert from_prices.weights[0] == 0.0
+        assert from_prices.signal[0] == 0.0
+        assert math.isnan(from_prices.volatility[0])
+        for name in ("pnl", "weights", "signal", "volatility"):
+            np.testing.assert_array_equal(
+                getattr(from_prices, name)[1:], getattr(from_returns, name)
             )
 
-            # Account for tanh normalization: signal = tanh(raw_signal / 3.0)
-            # So: weights = vol_weights * tanh(raw_signal / 3.0)
-            # We can't easily reverse the tanh, so test the relationship
-            expected_weights = expected_vol_weights * signal[valid_indices]
+    def test_constant_prices_give_no_position(self):
+        result = EuropeanTF(
+            EuropeanTFConfig(span_long=10, span_short=3, span_sigma=5)
+        ).run_from_prices(np.full(100, 42.0))
+        for name in ("pnl", "weights", "signal"):
+            np.testing.assert_array_equal(getattr(result, name), 0.0)
+        # prices that never move are no evidence of a volatility of zero
+        assert np.all(np.isnan(result.volatility))
 
-            # Test that weights follow the expected relationship
-            actual_weights = weights[valid_indices]
-            np.testing.assert_allclose(actual_weights, expected_weights, rtol=1e-10)
-
-    def test_volatility_scaling_inverse_relationship(self):
-        """Test that weights scale inversely with volatility."""
-        cfg = EuropeanTFConfig(sigma_target_annual=0.15, span_sigma=10)
-        system = EuropeanTF(cfg)
-
-        # Create two scenarios with different volatility levels
-        low_vol_returns = 0.001 * np.random.randn(100)
-        high_vol_returns = 0.03 * np.random.randn(100)
-
-        low_vol_prices = 100 * np.exp(np.cumsum(np.r_[0.0, low_vol_returns[1:]]))
-        high_vol_prices = 100 * np.exp(np.cumsum(np.r_[0.0, high_vol_returns[1:]]))
-
-        _, weights_low, _, vol_low = system.run_from_prices(low_vol_prices)
-        _, weights_high, _, vol_high = system.run_from_prices(high_vol_prices)
-
-        # When volatility is higher, position sizes should be smaller (for same signal)
-        # This tests the inverse relationship in volatility targeting
-        avg_vol_low = np.mean(vol_low[~np.isnan(vol_low)])
-        avg_vol_high = np.mean(vol_high[~np.isnan(vol_high)])
-
-        if avg_vol_high > avg_vol_low * 1.5:  # Significant difference
-            avg_weight_low = np.mean(np.abs(weights_low[~np.isnan(weights_low)]))
-            avg_weight_high = np.mean(np.abs(weights_high[~np.isnan(weights_high)]))
-
-            # Higher volatility should lead to smaller position sizes
-            assert avg_weight_high < avg_weight_low
-
-    def test_position_sizing_stability(self):
-        """Test that position sizing doesn't produce extreme values."""
-        cfg = EuropeanTFConfig(sigma_target_annual=0.15)
-        system = EuropeanTF(cfg)
-        pnl, weights, signal, volatility = system.run_from_prices(self.prices)
-
-        valid_weights = weights[~np.isnan(weights)]
-        valid_pnl = pnl[~np.isnan(pnl)]
-
-        if len(valid_weights) > 10:
-            # Positions shouldn't be astronomically large
-            max_weight = np.max(np.abs(valid_weights))
-            assert max_weight < 1000, f"Maximum weight {max_weight} is unreasonably large"
-
-            # Daily P&L shouldn't be extreme relative to typical price moves
-            if len(valid_pnl) > 10:
-                max_daily_pnl = np.max(np.abs(valid_pnl))
-                price_range = np.max(self.prices) - np.min(self.prices)
-                # P&L shouldn't exceed the entire price range in a single day
-                assert max_daily_pnl < price_range * 2
-
-    def test_volatility_targeting_responds_to_regime_changes(self):
-        """Test that volatility targeting adapts to changing market conditions."""
-        # Create data with clear regime change
-        low_vol_period = 0.005 * np.random.randn(200)  # Low volatility
-        high_vol_period = 0.025 * np.random.randn(200)  # High volatility
-        combined_returns = np.concatenate([low_vol_period, high_vol_period])
-
-        prices = 100 * np.exp(np.cumsum(np.r_[0.0, combined_returns[1:]]))
-
-        cfg = EuropeanTFConfig(sigma_target_annual=0.12, span_sigma=30)
-        system = EuropeanTF(cfg)
-        pnl, weights, signal, volatility = system.run_from_prices(prices)
-
-        # Compare average position sizes in each regime
-        period1_weights = weights[50:150]  # Low vol period (skip warmup)
-        period2_weights = weights[250:350]  # High vol period (skip transition)
-
-        period1_weights = period1_weights[~np.isnan(period1_weights)]
-        period2_weights = period2_weights[~np.isnan(period2_weights)]
-
-        if len(period1_weights) > 10 and len(period2_weights) > 10:
-            avg_weight_p1 = np.mean(np.abs(period1_weights))
-            avg_weight_p2 = np.mean(np.abs(period2_weights))
-
-            # In the higher volatility period, average position sizes should be smaller
-            # (Allow some tolerance for estimation lag and noise)
-            assert avg_weight_p2 < avg_weight_p1 * 1.5
-
-    def test_pnl_calculation_consistency(self):
-        """Test P&L calculation consistency."""
-        cfg = EuropeanTFConfig()
-        system = EuropeanTF(cfg)
-        pnl, weights, signal, volatility = system.run_from_prices(self.prices)
-
-        # P&L should be w[t-1] * r[t]
-        returns = np.diff(np.log(self.prices))
-        returns = np.r_[0.0, returns]
-
-        # Manual P&L calculation
-        manual_pnl = np.zeros_like(pnl)
-        manual_pnl[1:] = weights[:-1] * returns[1:]
-
-        np.testing.assert_allclose(pnl, manual_pnl)
-
-    def test_signal_properties(self):
-        """Test signal properties."""
-        cfg = EuropeanTFConfig(mode="longshort", span_long=100, span_short=20)
-        system = EuropeanTF(cfg)
-        pnl, weights, signal, volatility = system.run_from_prices(self.prices)
-
-        valid_signal = signal[~np.isnan(signal)]
-        if len(valid_signal) > 0:
-            # With tanh normalization, signals are bounded to (-1, 1)
-            assert np.abs(np.mean(valid_signal)) < 1.0
-            assert np.max(np.abs(valid_signal)) <= 1.0  # Bounded signals
-
-    def test_volatility_estimates(self):
-        """Test volatility estimates."""
-        cfg = EuropeanTFConfig(span_sigma=20)
-        system = EuropeanTF(cfg)
-        pnl, weights, signal, volatility = system.run_from_prices(self.prices)
-
-        valid_vol = volatility[~np.isnan(volatility)]
-        assert np.all(valid_vol > 0)
-
-        # FIX: Update bounds to match realistic volatility implementation
-        # OLD: assert np.all(annual_vol > 0.01) and assert np.all(annual_vol < 1.0)
-        # NEW: Match the implemented bounds
-        annual_vol = valid_vol * np.sqrt(cfg.a)
-        assert np.all(annual_vol >= 0.008)  # 0.05% daily * sqrt(260) ≈ 0.8% annual
-        assert np.all(annual_vol <= 2.5)
-
-    def test_extreme_parameters(self):
-        """Test with extreme but valid parameters."""
-        # Very high vol target
-        cfg_high_vol = EuropeanTFConfig(sigma_target_annual=0.5)
-        system = EuropeanTF(cfg_high_vol)
-        pnl, weights, signal, volatility = system.run_from_prices(self.prices)
-        assert np.isfinite(pnl[50:]).all()
-
-        # Very low vol target
-        cfg_low_vol = EuropeanTFConfig(sigma_target_annual=0.01)
-        system = EuropeanTF(cfg_low_vol)
-        pnl, weights, signal, volatility = system.run_from_prices(self.prices)
-        assert np.isfinite(pnl[50:]).all()
-
-        # Very short spans
-        cfg_short = EuropeanTFConfig(span_sigma=2, span_long=5, span_short=2)
-        system = EuropeanTF(cfg_short)
-        pnl, weights, signal, volatility = system.run_from_prices(self.prices)
-        assert np.isfinite(pnl[10:]).all()
-
-    def test_constant_prices(self):
-        """Test with constant price series."""
-        constant_prices = np.full(100, 100.0)
-        cfg = EuropeanTFConfig()
-        system = EuropeanTF(cfg)
-        pnl, weights, signal, volatility = system.run_from_prices(constant_prices)
-
-        # Should handle gracefully without errors
-        assert len(pnl) == len(constant_prices)
-        # P&L should be mostly zero (no price changes)
-        np.testing.assert_allclose(pnl, 0.0, atol=1e-10)
-
-    def test_high_frequency_data(self):
-        """Test with high frequency (many observations) data."""
-        np.random.seed(123)
-        n_hf = 10000
-        returns_hf = 0.00001 + 0.001 * np.random.randn(n_hf)
-        prices_hf = 100 * np.cumprod(1 + np.r_[0.0, returns_hf[1:]])
-
-        cfg = EuropeanTFConfig(a=365 * 24 * 60)  # Minute data
-        system = EuropeanTF(cfg)
-        pnl, weights, signal, volatility = system.run_from_prices(prices_hf)
-
-        # Should handle large datasets
-        assert len(pnl) == n_hf
-        warmup = 100
-        assert np.isfinite(pnl[warmup:]).all()
-
-    def test_trending_vs_mean_reverting_data(self):
-        """Test system behavior on different market regimes."""
-        np.random.seed(456)
-        n = 500
-
-        # Trending data
-        trending_returns = 0.001 + 0.01 * np.random.randn(n)
-        for i in range(1, n):
-            trending_returns[i] += 0.1 * trending_returns[i - 1]  # Add momentum
-        trending_prices = 100 * np.cumprod(1 + np.r_[0.0, trending_returns[1:]])
-
-        # Mean reverting data
-        mr_returns = np.zeros(n)
-        mr_returns[0] = 0.01 * np.random.randn()
-        for i in range(1, n):
-            mr_returns[i] = -0.1 * mr_returns[i - 1] + 0.01 * np.random.randn()
-        mr_prices = 100 * np.cumprod(1 + np.r_[0.0, mr_returns[1:]])
-
-        cfg = EuropeanTFConfig()
-        system = EuropeanTF(cfg)
-
-        # Run on both datasets
-        pnl_trend, _, _, _ = system.run_from_prices(trending_prices)
-        pnl_mr, _, _, _ = system.run_from_prices(mr_prices)
-
-        # Both should produce valid results
-        assert np.isfinite(pnl_trend[50:]).all()
-        assert np.isfinite(pnl_mr[50:]).all()
-
-        # Trending data might produce higher Sharpe (but not guaranteed)
-        trend_sharpe = (
-            np.mean(pnl_trend[50:]) / np.std(pnl_trend[50:]) if np.std(pnl_trend[50:]) > 0 else 0
+    def test_first_move_after_a_flat_stretch(self):
+        prices = np.r_[np.full(40, 100.0), 101.0, 102.0, 101.5, 103.0]
+        result = EuropeanTF(
+            EuropeanTFConfig(mode="single", span_long=5, span_sigma=5, warmup=1)
+        ).run_from_prices(prices)
+        for name in ("pnl", "weights", "signal"):
+            assert np.all(np.isfinite(getattr(result, name)))
+        assert np.all(np.isnan(result.volatility[:40]))
+        assert result.volatility[40] == pytest.approx(0.01)  # the move itself: 1 %
+        assert result.signal[40] == 0.0  # which cannot be normalised by anything earlier
+        # the second move, 102 / 101 - 1, over the 1 % of the day before; the factor
+        # is the loading of the latest observation, sqrt((1 + nu) / (1 - nu)) (1 - nu)
+        nu = span_to_nu(5)
+        assert result.signal[41] == pytest.approx(
+            math.sqrt((1 + nu) * (1 - nu)) * (1 / 101) / 0.01, rel=1e-12
         )
-        mr_sharpe = np.mean(pnl_mr[50:]) / np.std(pnl_mr[50:]) if np.std(pnl_mr[50:]) > 0 else 0
 
-        # Both should be finite
-        assert np.isfinite(trend_sharpe)
-        assert np.isfinite(mr_sharpe)
+    @pytest.mark.parametrize("cfg", CONFIGS)
+    def test_unchanged_prices_in_front_of_a_series_change_nothing(self, rng, cfg):
+        # A series padded with its first price. Counted as observations, sixty
+        # returns of zero would be a volatility of zero, and the first real
+        # return, divided by it, a signal and a weight of any size.
+        prices = 80 * np.cumprod(1 + returns(rng, 300))
+        padded = np.r_[np.full(60, prices[0]), prices]
+        plain = EuropeanTF(cfg).run_from_prices(prices)
+        late = EuropeanTF(cfg).run_from_prices(padded)
+        for name in ("pnl", "weights", "signal", "volatility"):
+            np.testing.assert_array_equal(getattr(late, name)[60:], getattr(plain, name))
+            np.testing.assert_array_equal(getattr(late, name)[:60], getattr(plain, name)[0])
+        assert np.any(plain.weights != 0.0)
 
-    def test_weight_constraints(self):
-        """Test that weights remain within reasonable bounds."""
-        cfg = EuropeanTFConfig(sigma_target_annual=0.15)
-        system = EuropeanTF(cfg)
-        pnl, weights, signal, volatility = system.run_from_prices(self.prices)
+    @pytest.mark.parametrize(
+        ("prices", "message"),
+        [([100.0], "at least 2"), ([100.0, -1.0, 3.0], "positive"), ([1.0, math.nan], "NaN")],
+    )
+    def test_rejects_invalid_prices(self, prices, message):
+        with pytest.raises(ValueError, match=message):
+            EuropeanTF().run_from_prices(prices)
 
-        valid_weights = weights[~np.isnan(weights)]
-        if len(valid_weights) > 0:
-            # With volatility bounds, max leverage ≈ 0.15/(sqrt(260)*0.0005) ≈ 18.6
-            reasonable_weights = np.abs(valid_weights) < 25  # Allow for some buffer
-            assert np.mean(reasonable_weights) > 0.9
+    @pytest.mark.parametrize(
+        ("r", "message"), [([], "at least 1"), ([0.1, math.inf], "infinite"), ([[0.1]], "one-dim")]
+    )
+    def test_rejects_invalid_returns(self, r, message):
+        with pytest.raises(ValueError, match=message):
+            EuropeanTF().run_from_returns(r)
 
-    def test_minimal_data(self):
-        """Test with minimal amount of data."""
-        # Test with just enough data
-        min_prices = self.prices[:100]  # Minimum reasonable amount
-        cfg = EuropeanTFConfig(span_long=20, span_short=5, span_sigma=10)
-        system = EuropeanTF(cfg)
-        pnl, weights, signal, volatility = system.run_from_prices(min_prices)
 
-        assert len(pnl) == len(min_prices)
-        # Some values should be finite after warmup
-        warmup = 25
-        assert np.any(np.isfinite(pnl[warmup:]))
+class TestRiskControls:
+    def test_floor_bounds_the_weight_after_a_quiet_stretch(self):
+        # A market that all but stops moving for a year and then wakes up. While
+        # it is quiet the volatility estimate decays, to 1.5e-6 a day here, and
+        # the weight grows as its reciprocal: 5600 times the capital on the last
+        # quiet day, which then earns the first normal return of 1 %.
+        days = np.tile([1.0, 1.0, -1.0], 200)  # two days up and one down: a trend
+        quiet = np.r_[0.01 * days[:201], 1e-6 * days[:300], 0.01 * days[:99]]
+        plain = EuropeanTF(EuropeanTFConfig(span_long=20, span_short=4)).run_from_returns(quiet)
+        floored = EuropeanTF(
+            EuropeanTFConfig(span_long=20, span_short=4, sigma_floor_annual=0.05)
+        ).run_from_returns(quiet)
+        floor_daily = 0.05 / math.sqrt(260)
+        assert np.nanmin(floored.volatility) == pytest.approx(floor_daily)
+        np.testing.assert_allclose(
+            floored.volatility[33:],
+            np.maximum(ewma_volatility_from_returns(quiet, span_to_nu(33))[33:], floor_daily),
+        )
+        assert np.abs(plain.weights).max() == pytest.approx(5644, rel=0.01)
+        assert np.abs(plain.pnl).max() == pytest.approx(56.4, rel=0.01)  # times the capital
+        assert np.abs(floored.weights).max() < 5
+        assert np.abs(floored.pnl).max() < 0.05
+        # before the floor binds the two systems are the same
+        np.testing.assert_array_equal(plain.weights[:200], floored.weights[:200])
 
-    def test_different_span_combinations(self):
-        """Test various span combinations."""
-        span_combinations = [
-            (10, 50, 5),  # Short sigma, medium long, very short short
-            (100, 500, 50),  # Long sigma, very long long, medium short
-            (20, 100, 20),  # Equal sigma and short spans
-        ]
+    def test_weight_cap(self, rng):
+        r = returns(rng)
+        cfg = EuropeanTFConfig(span_long=20, span_short=4)
+        plain = EuropeanTF(cfg).run_from_returns(r)
+        capped = EuropeanTF(dataclasses.replace(cfg, weight_cap=0.5)).run_from_returns(r)
+        assert np.abs(plain.weights).max() > 0.5
+        np.testing.assert_array_equal(capped.weights, np.clip(plain.weights, -0.5, 0.5))
+        np.testing.assert_allclose(capped.pnl[1:], capped.weights[:-1] * r[1:])
+        np.testing.assert_array_equal(capped.signal, plain.signal)
 
-        for span_sigma, span_long, span_short in span_combinations:
-            cfg = EuropeanTFConfig(
-                span_sigma=span_sigma, mode="longshort", span_long=span_long, span_short=span_short
-            )
-            system = EuropeanTF(cfg)
-            pnl, weights, signal, volatility = system.run_from_prices(self.prices)
 
-            # Should produce valid results for all combinations
-            warmup = max(span_sigma, span_long) + 20
-            if warmup < len(pnl):
-                assert np.isfinite(pnl[warmup:]).all()
+class TestConfig:
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"sigma_target_annual": 0.0}, "sigma_target_annual"),
+            ({"sigma_target_annual": -0.1}, "sigma_target_annual"),
+            ({"sigma_target_annual": math.nan}, "sigma_target_annual"),
+            ({"a": 0}, "a must"),
+            ({"span_sigma": 0.5}, "span_sigma"),
+            ({"span_long": 0}, "span_long"),
+            ({"span_short": 0}, "span_short"),
+            ({"span_long": "250"}, "span_long"),
+            ({"mode": "both"}, "mode"),
+            ({"mode": "SINGLE"}, "mode"),
+            ({"span_long": 20, "span_short": 20}, "smaller than span_long"),
+            ({"span_long": 20, "span_short": 50}, "smaller than span_long"),
+            ({"warmup": 0}, "warmup"),
+            ({"warmup": 2.5}, "warmup"),
+            ({"sigma_floor_annual": -0.01}, "sigma_floor_annual"),
+            ({"weight_cap": 0.0}, "weight_cap"),
+            ({"weight_cap": -1.0}, "weight_cap"),
+        ],
+    )
+    def test_rejects_invalid_parameters(self, kwargs, message):
+        with pytest.raises(ValueError, match=message):
+            EuropeanTFConfig(**kwargs)
 
-    def test_edge_case_very_small_prices(self):
-        """Test with very small price values."""
-        small_prices = self.prices * 1e-6  # Micro prices
+    def test_single_mode_ignores_the_short_span(self, rng):
+        r = returns(rng)
+        a = EuropeanTF(
+            EuropeanTFConfig(mode="single", span_long=20, span_short=5)
+        ).run_from_returns(r)
+        b = EuropeanTF(
+            EuropeanTFConfig(mode="single", span_long=20, span_short=90)
+        ).run_from_returns(r)
+        np.testing.assert_array_equal(a.pnl, b.pnl)
+
+    def test_is_immutable(self):
         cfg = EuropeanTFConfig()
-        system = EuropeanTF(cfg)
-        pnl, weights, signal, volatility = system.run_from_prices(small_prices)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            cfg.span_long = 10  # type: ignore[misc]
 
-        # Should handle small prices without numerical issues
-        warmup = 50
-        assert np.isfinite(pnl[warmup:]).all()
-        assert np.isfinite(weights[warmup:]).all()
+    def test_stores_plain_python_numbers(self, rng):
+        typed = EuropeanTFConfig(
+            sigma_target_annual=np.float64(0.15),
+            a=np.int64(260),
+            span_sigma=np.float32(33),
+            span_long=np.int32(250),
+            span_short=20,
+            warmup=np.int64(40),
+            sigma_floor_annual=np.float32(0.0),
+            weight_cap=np.float64(8.0),
+        )
+        assert typed == EuropeanTFConfig(warmup=40, weight_cap=8.0)
+        for field in dataclasses.fields(typed):
+            assert type(getattr(typed, field.name)) in (float, int, str), field.name
+        assert type(typed.warmup) is int
+        assert typed.warmup_periods == 40
+        r = returns(rng)
+        np.testing.assert_array_equal(
+            EuropeanTF(typed).run_from_returns(r).pnl,
+            EuropeanTF(EuropeanTFConfig(warmup=40, weight_cap=8.0)).run_from_returns(r).pnl,
+        )
+        with pytest.raises(ValueError, match="a must be finite"):
+            EuropeanTFConfig(a=10**400)
 
-    def test_edge_case_very_large_prices(self):
-        """Test with very large price values."""
-        large_prices = self.prices * 1e6  # Million dollar prices
-        cfg = EuropeanTFConfig()
-        system = EuropeanTF(cfg)
-        pnl, weights, signal, volatility = system.run_from_prices(large_prices)
 
-        # Should handle large prices without numerical issues
-        warmup = 50
-        assert np.isfinite(pnl[warmup:]).all()
-        assert np.isfinite(weights[warmup:]).all()
+class TestResult:
+    def test_unpacks_in_the_documented_order(self, rng):
+        result = EuropeanTF(CONFIGS[0]).run_from_returns(returns(rng))
+        assert isinstance(result, EuropeanTFResult)
+        pnl, weights, signal, volatility = result
+        assert pnl is result.pnl
+        assert weights is result.weights
+        assert signal is result.signal
+        assert volatility is result.volatility
 
-    def test_configuration_immutability(self):
-        """Test that configuration doesn't change during execution."""
-        cfg = EuropeanTFConfig(sigma_target_annual=0.12, span_long=100)
-        original_target = cfg.sigma_target_annual
-        original_span = cfg.span_long
+    def test_indexes_and_measures_like_the_tuple_it_replaces(self, rng):
+        result = EuropeanTF(CONFIGS[0]).run_from_returns(returns(rng))
+        assert len(result) == 4
+        assert result[0] is result.pnl
+        assert result[-1] is result.volatility
+        middle = result[1:3]
+        assert isinstance(middle, tuple)
+        assert middle[0] is result.weights
+        assert middle[1] is result.signal
+        with pytest.raises(IndexError):
+            result[4]
 
-        system = EuropeanTF(cfg)
-        system.run_from_prices(self.prices)
-
-        # Configuration should remain unchanged
-        assert cfg.sigma_target_annual == original_target
-        assert cfg.span_long == original_span
+    def test_does_not_modify_its_input(self, rng):
+        r = returns(rng)
+        copy = r.copy()
+        EuropeanTF(CONFIGS[1]).run_from_returns(r)
+        np.testing.assert_array_equal(r, copy)

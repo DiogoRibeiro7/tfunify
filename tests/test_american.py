@@ -1,550 +1,502 @@
+"""American system: a hand-worked path, the rules as invariants, and the range."""
+
+from __future__ import annotations
+
+import dataclasses
+import math
+
 import numpy as np
 import pytest
-from tfunify.american import AmericanTF, AmericanTFConfig, _true_range, _atr
+
+from tests import reference
+from tfunify import (
+    AmericanTF,
+    AmericanTFConfig,
+    AmericanTFResult,
+    average_true_range,
+    span_to_nu,
+    true_range,
+)
+
+NAN = math.nan
 
 
-class TestAmericanTFConfig:
-    """Comprehensive tests for AmericanTFConfig validation."""
-
-    def test_default_configuration(self):
-        """Test default configuration is valid."""
-        cfg = AmericanTFConfig()
-        assert cfg.span_long == 250
-        assert cfg.span_short == 20
-        assert cfg.atr_period == 33
-        assert cfg.q == 5.0
-        assert cfg.p == 5.0
-        assert cfg.r_multiple == 0.01
-
-    def test_span_validation(self):
-        """Test span parameter validation."""
-        # Valid spans
-        AmericanTFConfig(span_long=100, span_short=20)
-        AmericanTFConfig(span_long=2, span_short=1)
-
-        # Invalid spans - negative or zero
-        with pytest.raises(ValueError, match="span_long must be >= 1"):
-            AmericanTFConfig(span_long=0)
-        with pytest.raises(ValueError, match="span_short must be >= 1"):
-            AmericanTFConfig(span_short=0)
-        with pytest.raises(ValueError, match="span_long must be >= 1"):
-            AmericanTFConfig(span_long=-10)
-
-        # Invalid span relationship
-        with pytest.raises(ValueError, match="span_short must be less than span_long"):
-            AmericanTFConfig(span_long=20, span_short=30)
-        with pytest.raises(ValueError, match="span_short must be less than span_long"):
-            AmericanTFConfig(span_long=50, span_short=50)
-
-    def test_atr_period_validation(self):
-        """Test ATR period validation."""
-        # Valid periods
-        AmericanTFConfig(atr_period=1)
-        AmericanTFConfig(atr_period=100)
-
-        # Invalid periods
-        with pytest.raises(ValueError, match="atr_period must be >= 1"):
-            AmericanTFConfig(atr_period=0)
-        with pytest.raises(ValueError, match="atr_period must be >= 1"):
-            AmericanTFConfig(atr_period=-5)
-
-    def test_threshold_validation(self):
-        """Test q and p threshold validation."""
-        # Valid thresholds
-        AmericanTFConfig(q=0.1, p=0.1)
-        AmericanTFConfig(q=10.0, p=10.0)
-
-        # Invalid q
-        with pytest.raises(ValueError, match="q must be positive"):
-            AmericanTFConfig(q=0.0)
-        with pytest.raises(ValueError, match="q must be positive"):
-            AmericanTFConfig(q=-1.0)
-
-        # Invalid p
-        with pytest.raises(ValueError, match="p must be positive"):
-            AmericanTFConfig(p=0.0)
-        with pytest.raises(ValueError, match="p must be positive"):
-            AmericanTFConfig(p=-2.0)
-
-    def test_r_multiple_validation(self):
-        """Test r_multiple validation."""
-        # Valid values
-        AmericanTFConfig(r_multiple=0.001)
-        AmericanTFConfig(r_multiple=0.1)
-
-        # Invalid values
-        with pytest.raises(ValueError, match="r_multiple must be positive"):
-            AmericanTFConfig(r_multiple=0.0)
-        with pytest.raises(ValueError, match="r_multiple must be positive"):
-            AmericanTFConfig(r_multiple=-0.01)
+def ohlc(seed, n=1500, drift=0.0002, vol=0.012):
+    """A price path with highs and lows around the close."""
+    rng = np.random.default_rng(seed)
+    close = 100 * np.exp(np.cumsum(drift + vol * rng.standard_normal(n)))
+    high = close * (1 + 0.006 * rng.random(n))
+    low = close * (1 - 0.006 * rng.random(n))
+    return close, high, low
 
 
 class TestTrueRange:
-    """Tests for True Range calculation."""
+    def test_definition(self):
+        high = np.array([11.0, 12.0, 10.5, 14.0])
+        low = np.array([9.0, 11.0, 9.0, 13.0])
+        close = np.array([10.0, 11.5, 9.5, 13.5])
+        # day 0: range; day 1: 12 - 10 (gap up); day 2: 11.5 - 9 (gap down); day 3: 14 - 9.5
+        np.testing.assert_allclose(true_range(high, low, close), [2.0, 2.0, 2.5, 4.5])
 
-    def test_basic_true_range(self):
-        """Test basic True Range calculation."""
-        high = np.array([105.0, 108.0, 107.0, 110.0])
-        low = np.array([100.0, 103.0, 104.0, 106.0])
-        close = np.array([102.0, 107.0, 106.0, 109.0])
-
-        tr = _true_range(high, low, close)
-
-        # Manual calculation (using correct previous close values)
-        # t=0: max(105-100, |105-102|, |100-102|) = max(5, 3, 2) = 5
-        # t=1: max(108-103, |108-102|, |103-102|) = max(5, 6, 1) = 6  (uses close[0]=102)
-        # t=2: max(107-104, |107-107|, |104-107|) = max(3, 0, 3) = 3  (uses close[1]=107)
-        # t=3: max(110-106, |110-106|, |106-106|) = max(4, 4, 0) = 4  (uses close[2]=106)
-        expected = np.array([5.0, 6.0, 3.0, 4.0])
-        np.testing.assert_allclose(tr, expected)
-
-    def test_true_range_with_gaps(self):
-        """Test True Range with price gaps."""
-        high = np.array([100.0, 120.0, 115.0])  # Gap up
-        low = np.array([95.0, 115.0, 110.0])
-        close = np.array([98.0, 118.0, 113.0])
-
-        tr = _true_range(high, low, close)
-
-        # Correct manual calculation (using actual previous close values)
-        # t=0: max(100-95, |100-98|, |95-98|) = max(5, 2, 3) = 5
-        # t=1: max(120-115, |120-98|, |115-98|) = max(5, 22, 17) = 22  (uses close[0]=98)
-        # t=2: max(115-110, |115-118|, |110-118|) = max(5, 3, 8) = 8   (uses close[1]=118)
-        expected = np.array([5.0, 22.0, 8.0])
-        np.testing.assert_allclose(tr, expected)
-
-    def test_true_range_small_gaps(self):
-        """Test True Range with smaller gaps where H-L dominates."""
-        high = np.array([105.0, 106.0, 107.0])
-        low = np.array([100.0, 101.0, 102.0])
-        close = np.array([103.0, 104.0, 105.0])
-
-        tr = _true_range(high, low, close)
-
-        # Manual calculation:
-        # t=0: max(105-100, |105-103|, |100-103|) = max(5, 2, 3) = 5
-        # t=1: max(106-101, |106-103|, |101-103|) = max(5, 3, 2) = 5
-        # t=2: max(107-102, |107-104|, |102-104|) = max(5, 3, 2) = 5
-        expected = np.array([5.0, 5.0, 5.0])
-        np.testing.assert_allclose(tr, expected)
-
-    def test_true_range_gap_down(self):
-        """Test True Range with gap down scenario."""
-        high = np.array([110.0, 105.0, 108.0])
-        low = np.array([105.0, 95.0, 103.0])  # Gap down on day 2
-        close = np.array([108.0, 98.0, 106.0])
-
-        tr = _true_range(high, low, close)
-
-        # Manual calculation:
-        # t=0: max(110-105, |110-108|, |105-108|) = max(5, 2, 3) = 5
-        # t=1: max(105-95, |105-108|, |95-108|) = max(10, 3, 13) = 13  (gap down)
-        # t=2: max(108-103, |108-98|, |103-98|) = max(5, 10, 5) = 10
-        expected = np.array([5.0, 13.0, 10.0])
-        np.testing.assert_allclose(tr, expected)
-
-    def test_true_range_single_observation(self):
-        """Test True Range with single observation."""
-        high = np.array([105.0])
-        low = np.array([100.0])
-        close = np.array([102.0])
-
-        tr = _true_range(high, low, close)
-
-        # Should be high - low = 5.0 for first observation
-        assert tr[0] == 5.0
-
-    def test_true_range_input_validation(self):
-        """Test True Range input validation."""
-        high = np.array([105.0, 108.0])
-        low = np.array([100.0, 103.0])
-        close = np.array([102.0])  # Different length
-
-        with pytest.raises(ValueError, match="high, low, and close must have same shape"):
-            _true_range(high, low, close)
-
-    def test_true_range_invalid_prices(self):
-        """Test True Range with invalid price relationships."""
-        high = np.array([100.0, 105.0])
-        low = np.array([105.0, 103.0])  # Low > High for first observation
-        close = np.array([102.0, 104.0])
-
-        with pytest.raises(ValueError, match="high prices cannot be less than low prices"):
-            _true_range(high, low, close)
-
-
-class TestATR:
-    """Tests for Average True Range calculation."""
-
-    def test_basic_atr(self):
-        """Test basic ATR calculation."""
-        high = np.array([105.0, 108.0, 107.0, 110.0, 112.0])
-        low = np.array([100.0, 103.0, 104.0, 106.0, 108.0])
-        close = np.array([102.0, 107.0, 106.0, 109.0, 111.0])
-        period = 3
-
-        atr = _atr(high, low, close, period)
-
-        # First period-1 values should be NaN
-        assert np.isnan(atr[0])
-        assert np.isnan(atr[1])
-
-        # ATR[2] should be average of first 3 TRs
-        tr = _true_range(high, low, close)
-        expected_atr_2 = np.mean(tr[:3])
-        assert abs(atr[2] - expected_atr_2) < 1e-10
-
-    def test_atr_period_validation(self):
-        """Test ATR period validation."""
-        high = np.array([105.0, 108.0])
-        low = np.array([100.0, 103.0])
-        close = np.array([102.0, 107.0])
-
-        with pytest.raises(ValueError, match="ATR period must be >= 1"):
-            _atr(high, low, close, 0)
-
-
-class TestAmericanTF:
-    """Comprehensive tests for AmericanTF system."""
-
-    def setup_method(self):
-        """Set up test data before each test."""
-        np.random.seed(42)
-        self.n = 500
-
-        # Generate trending price series with realistic OHLC
-        base_returns = 0.0005 + 0.015 * np.random.randn(self.n)
-        # Add some momentum
-        for i in range(1, self.n):
-            base_returns[i] += 0.08 * base_returns[i - 1]
-
-        self.close = 100 * np.cumprod(1 + np.r_[0.0, base_returns[1:]])
-
-        # Generate realistic high/low prices
-        daily_range = 0.005 + 0.01 * np.abs(np.random.randn(self.n))
-        self.high = self.close * (1 + daily_range * np.random.uniform(0.3, 1.0, self.n))
-        self.low = self.close * (1 - daily_range * np.random.uniform(0.3, 1.0, self.n))
-
-        # Ensure OHLC consistency
-        self.high = np.maximum(self.high, self.close)
-        self.low = np.minimum(self.low, self.close)
-
-    def test_basic_functionality(self):
-        """Test basic American TF functionality."""
-        cfg = AmericanTFConfig(
-            span_long=50, span_short=10, atr_period=20, q=2.0, p=3.0, r_multiple=0.01
+    def test_against_a_loop(self):
+        close, high, low = ohlc(1, 300)
+        np.testing.assert_allclose(
+            true_range(high, low, close), reference.true_range_loop(high, low, close), rtol=1e-14
         )
-        system = AmericanTF(cfg)
-        pnl, units = system.run(self.close, self.high, self.low)
 
-        # Basic shape checks
-        assert len(pnl) == len(self.close)
-        assert len(units) == len(self.close)
+    def test_first_day_is_the_range_of_that_day(self):
+        # there is no previous close; the close of the day itself is not a
+        # substitute for it, also when it lies outside the range (a settlement)
+        assert true_range([11.0], [9.0], [12.0]).tolist() == [2.0]
+        assert true_range([11.0, 11.0], [9.0, 9.0], [12.0, 10.0]).tolist() == [2.0, 3.0]
 
-        # After warmup, values should be finite
-        warmup = max(cfg.span_long, cfg.atr_period) + 10
-        assert np.isfinite(pnl[warmup:]).all()
-        assert np.isfinite(units[warmup:]).all()
+    def test_close_only_is_the_absolute_change(self):
+        close = np.array([10.0, 12.0, 11.0, 11.0])
+        np.testing.assert_allclose(true_range(close, close, close), [0.0, 2.0, 1.0, 0.0])
 
-    def test_close_only_mode(self):
-        """Test running with only close prices."""
-        cfg = AmericanTFConfig(span_long=30, span_short=5, atr_period=15)
-        system = AmericanTF(cfg)
-        pnl, units = system.run(self.close)  # No high/low provided
-
-        assert len(pnl) == len(self.close)
-        assert len(units) == len(self.close)
-
-        # Should produce valid results
-        warmup = 40
-        assert np.isfinite(pnl[warmup:]).all()
-
-    def test_position_sizing(self):
-        """Test position sizing logic."""
-        cfg = AmericanTFConfig(r_multiple=0.02, q=1.0)  # Easy entry conditions
-        system = AmericanTF(cfg)
-        pnl, units = system.run(self.close, self.high, self.low)
-
-        # When in position, units should follow r_multiple formula
-        non_zero_units = units[units != 0]
-        if len(non_zero_units) > 0:
-            # Check that position sizes are reasonable
-            assert np.all(np.abs(non_zero_units) > 0)
-            assert np.all(np.abs(non_zero_units) < 10)  # Not extremely large
-
-    def test_entry_exit_logic(self):
-        """Test entry and exit signal logic."""
-        cfg = AmericanTFConfig(
-            span_long=20,
-            span_short=5,
-            q=0.5,  # Easy entry
-            p=2.0,  # Stop loss
+    @pytest.mark.parametrize("period", [1, 2, 7, 33])
+    def test_average_against_a_loop(self, period):
+        close, high, low = ohlc(2, 200)
+        np.testing.assert_allclose(
+            average_true_range(high, low, close, period),
+            reference.atr_loop(high, low, close, period),
+            rtol=1e-12,
         )
-        system = AmericanTF(cfg)
-        pnl, units = system.run(self.close, self.high, self.low)
 
-        # Should have some position changes
-        position_changes = np.sum(np.abs(np.diff(units)) > 1e-10)
-        assert position_changes > 0  # Should enter/exit positions
+    def test_average_is_missing_until_the_window_is_full(self):
+        close, high, low = ohlc(3, 50)
+        atr = average_true_range(high, low, close, 20)
+        assert np.all(np.isnan(atr[:19]))
+        assert np.all(np.isfinite(atr[19:]))
+        assert np.all(np.isnan(average_true_range(high, low, close, 51)))
 
-    def test_stop_loss_mechanism(self):
-        """Test stop loss mechanism."""
-        # Create data with a clear trend followed by reversal
-        trend_up = np.linspace(100, 120, 50)
-        trend_down = np.linspace(120, 100, 50)
-        close_prices = np.concatenate([trend_up, trend_down])
-        high_prices = close_prices * 1.01
-        low_prices = close_prices * 0.99
-
-        cfg = AmericanTFConfig(
-            span_long=20,
-            span_short=5,
-            q=1.0,  # Easy entry
-            p=2.0,  # Reasonable stop
-            atr_period=10,
+    def test_average_starts_at_the_first_range_that_is_not_zero(self):
+        # five unchanged prices say nothing about the range of the instrument
+        close = np.array([50.0, 50.0, 50.0, 50.0, 50.0, 51.0, 53.0, 52.0, 52.0])
+        np.testing.assert_array_equal(true_range(close, close, close), [0, 0, 0, 0, 0, 1, 2, 1, 0])
+        np.testing.assert_allclose(
+            average_true_range(close, close, close, 2), [NAN] * 6 + [1.5, 1.5, 0.5]
         )
-        system = AmericanTF(cfg)
-        pnl, units = system.run(close_prices, high_prices, low_prices)
+        np.testing.assert_allclose(
+            average_true_range(close, close, close, 3), [NAN] * 7 + [4 / 3, 1.0]
+        )
 
-        # Should exit positions when trend reverses
-        assert len(pnl) == len(close_prices)
+    @pytest.mark.parametrize("period", [1, 5, 33])
+    def test_average_of_closes_only_needs_one_more_day(self, period):
+        # without highs and lows the first day has no range: `period` changes of
+        # the close are available on day `period`, counted from zero
+        close, _, _ = ohlc(4, 60)
+        atr = average_true_range(close, close, close, period)
+        assert np.all(np.isnan(atr[:period]))
+        assert np.all(np.isfinite(atr[period:]))
+        assert atr[period] == pytest.approx(np.abs(np.diff(close))[:period].mean(), rel=1e-12)
 
-    def test_different_parameter_combinations(self):
-        """Test various parameter combinations."""
-        param_sets = [
-            (10, 2, 5, 1.0, 1.5, 0.005),  # Fast system
-            (100, 20, 30, 3.0, 4.0, 0.02),  # Slow system
-            (50, 10, 15, 0.5, 0.8, 0.01),  # Sensitive system
+    def test_average_of_unchanged_prices_is_missing(self):
+        flat = np.full(30, 7.0)
+        assert np.all(np.isnan(average_true_range(flat, flat, flat, 3)))
+
+    @pytest.mark.parametrize("period", [0, -1, 2.0, True])
+    def test_rejects_invalid_period(self, period):
+        with pytest.raises(ValueError, match="period"):
+            average_true_range([2.0, 2.0], [1.0, 1.0], [1.5, 1.5], period)
+
+    @pytest.mark.parametrize(
+        ("high", "low", "close", "message"),
+        [
+            ([2.0, 2.0], [1.0, 1.0], [1.5], "same length"),
+            ([1.0, 2.0], [1.5, 1.0], [1.2, 1.5], "high must not be below low"),
+            ([2.0, math.nan], [1.0, 1.0], [1.5, 1.5], "high contains NaN"),
+            ([2.0, 2.0], [0.0, 1.0], [1.5, 1.5], "low must be strictly positive"),
+            ([2.0, 2.0], [1.0, 1.0], [1.5, -1.5], "close must be strictly positive"),
+        ],
+    )
+    def test_rejects_invalid_prices(self, high, low, close, message):
+        with pytest.raises(ValueError, match=message):
+            true_range(high, low, close)
+
+
+class TestWorkedExample:
+    """Nine closes, worked by hand.
+
+    Fast span 1 (the close itself), slow span 3 (nu = 1/2), two-day ATR of
+    absolute changes, buffer q = 0.5, stop p = 1, R = 0.01.
+
+    ========  =====  =====  =====  =====  =====  ======  =======  ========  =========
+    day           0      1      2      3      4       5        6         7          8
+    close       100    100    104    108    110     107      100        96         97
+    change        -      0      4      4      2       3        7         4          1
+    ATR           -      -      -      4      3     2.5        5       5.5        2.5
+    slow        100    100    102    105  107.5  107.25  103.625   99.8125   98.40625
+    ========  =====  =====  =====  =====  =====  ======  =======  ========  =========
+
+    The first change that is not zero is that of day 2, so the first two-day ATR
+    is that of day 3.
+    Day 3: 108 > 105 + 2, long, weight 0.01 * 108 / 4, stop 104. Days 4 and 5 the
+    stop trails to 107 and stays (a close equal to the stop is not a breach).
+    Day 6: 100 < 107 and the long signal is off: exit. The short signal is on
+    that day already, but the system stays flat on the day of the exit.
+    Day 7: 96 < 99.8125 - 2.75, short, weight -0.01 * 96 / 5.5, stop 101.5.
+    Day 8: the stop trails down to 99.5.
+    """
+
+    close = np.array([100.0, 100.0, 104.0, 108.0, 110.0, 107.0, 100.0, 96.0, 97.0])
+    cfg = AmericanTFConfig(span_long=3, span_short=1, atr_period=2, q=0.5, p=1.0, r_multiple=0.01)
+
+    @pytest.fixture
+    def result(self):
+        return AmericanTF(self.cfg).run(self.close)
+
+    def test_indicators(self, result):
+        np.testing.assert_allclose(result.atr, [NAN, NAN, NAN, 4, 3, 2.5, 5, 5.5, 2.5])
+        np.testing.assert_allclose(
+            result.slow, [100, 100, 102, 105, 107.5, 107.25, 103.625, 99.8125, 98.40625]
+        )
+        np.testing.assert_array_equal(result.fast, self.close)
+
+    def test_positions(self, result):
+        np.testing.assert_array_equal(result.position, [0, 0, 0, 1, 1, 1, 0, -1, -1])
+        short = -0.01 * 96 / 5.5
+        np.testing.assert_allclose(
+            result.weights, [0, 0, 0, 0.27, 0.27, 0.27, 0, short, short], rtol=1e-15
+        )
+
+    def test_stops(self, result):
+        np.testing.assert_allclose(result.stop, [NAN, NAN, NAN, 104, 107, 107, NAN, 101.5, 99.5])
+
+    def test_profit(self, result):
+        short = -0.01 * 96 / 5.5
+        expected = [
+            0,
+            0,
+            0,
+            0,
+            0.27 * (110 / 108 - 1),
+            0.27 * (107 / 110 - 1),
+            0.27 * (100 / 107 - 1),
+            0,
+            short * (97 / 96 - 1),
         ]
+        np.testing.assert_allclose(result.pnl, expected, rtol=1e-13, atol=1e-17)
 
-        for span_long, span_short, atr_period, q, p, r_mult in param_sets:
-            cfg = AmericanTFConfig(
-                span_long=span_long,
-                span_short=span_short,
-                atr_period=atr_period,
-                q=q,
-                p=p,
-                r_multiple=r_mult,
+    def test_weight_cap(self):
+        capped = AmericanTF(dataclasses.replace(self.cfg, weight_cap=0.2)).run(self.close)
+        short = -0.01 * 96 / 5.5  # 0.17: inside the cap
+        np.testing.assert_allclose(
+            capped.weights, [0, 0, 0, 0.2, 0.2, 0.2, 0, short, short], rtol=1e-15
+        )
+        np.testing.assert_array_equal(capped.position, [0, 0, 0, 1, 1, 1, 0, -1, -1])
+        # a tighter cap binds on the short side as well
+        tight = AmericanTF(dataclasses.replace(self.cfg, weight_cap=0.1)).run(self.close)
+        np.testing.assert_allclose(tight.weights, [0, 0, 0, 0.1, 0.1, 0.1, 0, -0.1, -0.1])
+        np.testing.assert_array_equal(tight.stop, capped.stop)  # stops do not move
+
+
+RULE_CASES = [
+    (11, AmericanTFConfig(span_long=50, span_short=10, atr_period=20, q=2.0, p=3.0)),
+    (12, AmericanTFConfig(span_long=20, span_short=5, atr_period=10, q=0.5, p=1.0)),
+    (13, AmericanTFConfig(span_long=250, span_short=20, atr_period=33, q=5.0, p=5.0)),
+    (14, AmericanTFConfig(span_long=8, span_short=2, atr_period=3, q=0.2, p=0.5, r_multiple=0.02)),
+]
+
+
+class TestRules:
+    """Every day of a random path obeys Definition A.3, and nothing else happens."""
+
+    @pytest.mark.parametrize("close_only", [False, True])
+    @pytest.mark.parametrize(("seed", "cfg"), RULE_CASES)
+    def test_every_day_follows_the_definition(self, seed, cfg, close_only):
+        close, high, low = ohlc(seed)
+        if close_only:
+            high = low = close
+            result = AmericanTF(cfg).run(close)
+        else:
+            result = AmericanTF(cfg).run(close, high, low)
+
+        atr = reference.atr_loop(high, low, close, cfg.atr_period)
+        slow = reference.ewma_sum(close, span_to_nu(cfg.span_long))
+        fast = reference.ewma_sum(close, span_to_nu(cfg.span_short))
+        np.testing.assert_allclose(result.atr, atr, rtol=1e-12)
+        np.testing.assert_allclose(result.slow, slow, rtol=1e-12)
+        np.testing.assert_allclose(result.fast, fast, rtol=1e-12)
+
+        position, weights, stop = result.position, result.weights, result.stop
+        assert position[0] == 0
+        counts = dict.fromkeys(("entry", "exit", "held through a breach", "trail"), 0)
+        for t in range(1, close.size):
+            available = np.isfinite(atr[t]) and atr[t] > 0
+            long_on = available and fast[t] > slow[t] + cfg.q * atr[t]
+            short_on = available and fast[t] < slow[t] - cfg.q * atr[t]
+            before = position[t - 1]
+            if before == 0:
+                expected = 1 if long_on else -1 if short_on else 0
+                assert position[t] == expected
+                if expected != 0:
+                    counts["entry"] += 1
+                    assert weights[t] == pytest.approx(
+                        expected * cfg.r_multiple * close[t] / atr[t], rel=1e-12
+                    )
+                    assert stop[t] == pytest.approx(close[t] - expected * cfg.p * atr[t])
+                    # the distance to the stop, as a return, times the weight is R * p
+                    assert abs(weights[t]) * cfg.p * atr[t] / close[t] == pytest.approx(
+                        cfg.r_multiple * cfg.p
+                    )
+                else:
+                    assert weights[t] == 0.0
+                    assert np.isnan(stop[t])
+            else:
+                signal_on = long_on if before > 0 else short_on
+                breached = close[t] < stop[t - 1] if before > 0 else close[t] > stop[t - 1]
+                if breached and not signal_on:
+                    counts["exit"] += 1
+                    assert position[t] == 0  # flat, never straight into the opposite side
+                    assert weights[t] == 0.0
+                    assert np.isnan(stop[t])
+                else:
+                    counts["held through a breach"] += int(breached)
+                    assert position[t] == before
+                    assert weights[t] == weights[t - 1]  # the size is fixed at inception
+                    trailed = close[t] - before * cfg.p * atr[t]
+                    expected_stop = (
+                        max(stop[t - 1], trailed) if before > 0 else min(stop[t - 1], trailed)
+                    )
+                    assert stop[t] == pytest.approx(expected_stop, rel=1e-12)
+                    counts["trail"] += int(stop[t] != stop[t - 1])
+        # the path must have exercised the rules it is meant to check
+        assert counts["entry"] >= 3
+        assert counts["exit"] >= 2
+        assert counts["trail"] >= 10
+
+    def test_a_breach_does_not_close_the_position_while_the_signal_is_on(self):
+        # tight stops and a small buffer: breaches with the signal still on are common
+        close, high, low = ohlc(12)
+        cfg = AmericanTFConfig(span_long=20, span_short=5, atr_period=10, q=0.05, p=0.3)
+        result = AmericanTF(cfg).run(close, high, low)
+        held = 0
+        for t in range(1, close.size):
+            if result.position[t - 1] == 1 and close[t] < result.stop[t - 1]:
+                long_on = result.fast[t] > result.slow[t] + cfg.q * result.atr[t]
+                if long_on:
+                    held += 1
+                    assert result.position[t] == 1
+        assert held >= 5
+
+    @pytest.mark.parametrize(("seed", "cfg"), RULE_CASES)
+    def test_profit_is_the_lagged_weight_times_the_simple_return(self, seed, cfg):
+        close, high, low = ohlc(seed)
+        result = AmericanTF(cfg).run(close, high, low)
+        assert result.pnl[0] == 0.0
+        np.testing.assert_allclose(
+            result.pnl[1:], result.weights[:-1] * (close[1:] - close[:-1]) / close[:-1], rtol=1e-12
+        )
+
+    @pytest.mark.parametrize(("seed", "cfg"), RULE_CASES)
+    def test_results_do_not_depend_on_later_data(self, seed, cfg):
+        close, high, low = ohlc(seed, 600)
+        full = AmericanTF(cfg).run(close, high, low)
+        for cut in (60, 300, 599):
+            part = AmericanTF(cfg).run(close[:cut], high[:cut], low[:cut])
+            for field in dataclasses.fields(AmericanTFResult):
+                np.testing.assert_array_equal(
+                    getattr(part, field.name), getattr(full, field.name)[:cut]
+                )
+
+
+class TestBehaviour:
+    def test_long_in_a_rising_market_and_short_in_a_falling_one(self):
+        cfg = AmericanTFConfig(span_long=50, span_short=10, atr_period=20, q=1.0, p=3.0)
+        rising = AmericanTF(cfg).run(np.linspace(100.0, 300.0, 500))
+        falling = AmericanTF(cfg).run(np.linspace(300.0, 100.0, 500))
+        assert np.all(rising.position >= 0)
+        assert np.all(falling.position <= 0)
+        assert np.all(rising.position[100:] == 1)
+        assert np.all(falling.position[100:] == -1)
+        assert rising.pnl.sum() > 0
+        assert falling.pnl.sum() > 0
+
+    def test_default_parameters_take_both_sides(self):
+        # 0.1.3 was short on every path; with the paper's parameters a drifting
+        # random walk is long in rising stretches and short in falling ones
+        rng = np.random.default_rng(7)
+        long_share, short_share = [], []
+        for _ in range(16):  # the shares of one path vary by 0.12
+            up = 100 * np.exp(np.cumsum(0.0006 + 0.01 * rng.standard_normal(3000)))
+            position = AmericanTF().run(up).position
+            long_share.append(np.mean(position == 1))
+            short_share.append(np.mean(position == -1))
+        assert np.mean(long_share) > 0.4  # about 0.6
+        assert np.mean(long_share) > 3 * np.mean(short_share)  # about 0.08
+        assert np.mean(short_share) > 0.01  # and it does go short at times
+
+    def test_a_line_and_its_reflection_take_opposite_sides(self):
+        # filters and ranges of a reflected price path are the reflections of the
+        # originals, so the positions mirror exactly (the sizes do not: they are
+        # proportional to the price)
+        cfg = AmericanTFConfig(span_long=30, span_short=5, atr_period=10, q=1.0, p=2.0)
+        line = np.linspace(100.0, 200.0, 300)
+        up = AmericanTF(cfg).run(line)
+        down = AmericanTF(cfg).run(300.0 - line)
+        np.testing.assert_array_equal(up.position, -down.position)
+
+    def test_constant_prices_never_trade(self):
+        result = AmericanTF(AmericanTFConfig(span_long=5, span_short=2, atr_period=3)).run(
+            np.full(60, 50.0)
+        )
+        np.testing.assert_array_equal(result.position, 0)
+        np.testing.assert_array_equal(result.weights, 0.0)
+        np.testing.assert_array_equal(result.pnl, 0.0)
+        assert np.all(np.isnan(result.atr))
+
+    @pytest.mark.parametrize("close_only", [False, True])
+    def test_unchanged_prices_in_front_of_a_series_change_nothing(self, close_only):
+        # A series padded with its first price, as data vendors deliver an
+        # instrument that started trading later than the others. The padding
+        # must not count as sixty days of zero range: the first real move would
+        # then meet an ATR of almost nothing, and R * price / ATR would be a
+        # position of many times the capital.
+        close, high, low = ohlc(21, 900)
+        cfg = AmericanTFConfig(span_long=40, span_short=8, atr_period=10, q=1.0, p=2.0)
+        pad = np.full(60, close[0])
+        if close_only:
+            plain = AmericanTF(cfg).run(close)
+            padded = AmericanTF(cfg).run(np.r_[pad, close])
+        else:
+            plain = AmericanTF(cfg).run(close, high, low)
+            padded = AmericanTF(cfg).run(np.r_[pad, close], np.r_[pad, high], np.r_[pad, low])
+        assert np.any(plain.position == 1)
+        assert np.any(plain.position == -1)
+        for name in ("position", "weights", "stop", "atr", "pnl"):
+            np.testing.assert_array_equal(
+                getattr(padded, name)[60:], getattr(plain, name), err_msg=name
             )
-            system = AmericanTF(cfg)
-            pnl, units = system.run(self.close, self.high, self.low)
+        # the filters of a constant are that constant up to rounding
+        np.testing.assert_allclose(padded.fast[60:], plain.fast, rtol=1e-13)
+        np.testing.assert_allclose(padded.slow[60:], plain.slow, rtol=1e-13)
+        np.testing.assert_array_equal(padded.position[:60], 0)
+        assert np.all(np.isnan(padded.atr[:60]))
 
-            # All should produce valid results
-            warmup = max(span_long, atr_period) + 10
-            if warmup < len(pnl):
-                assert np.isfinite(pnl[warmup:]).all()
+    def test_no_position_is_opened_while_the_range_is_zero(self):
+        # A jump followed by unchanged prices. While the jump is inside the ATR
+        # window the buffer of three ATRs keeps the system out; afterwards the ATR
+        # is zero, the entry condition "fast > slow + 0" holds, and the size
+        # R * price / ATR would be infinite.
+        close = np.r_[np.full(10, 100.0), np.full(30, 120.0)]
+        cfg = AmericanTFConfig(span_long=40, span_short=2, atr_period=3, q=3.0, p=1.0)
+        result = AmericanTF(cfg).run(close)
+        after_jump = np.arange(close.size) >= 13
+        np.testing.assert_array_equal(result.atr[after_jump], 0.0)
+        assert np.all(result.fast[after_jump] > result.slow[after_jump])
+        np.testing.assert_array_equal(result.position, 0)
+        np.testing.assert_array_equal(result.weights, 0.0)
+        np.testing.assert_array_equal(result.pnl, 0.0)
 
-    def test_extreme_market_conditions(self):
-        """Test with extreme market conditions."""
-        # Very volatile market
-        np.random.seed(123)
-        volatile_returns = 0.05 * np.random.randn(200)
-        volatile_close = 100 * np.cumprod(1 + np.r_[0.0, volatile_returns[1:]])
-        volatile_high = volatile_close * (1 + 0.02 * np.abs(np.random.randn(200)))
-        volatile_low = volatile_close * (1 - 0.02 * np.abs(np.random.randn(200)))
+    def test_short_series(self):
+        result = AmericanTF().run([100.0])
+        assert result.pnl.tolist() == [0.0]
+        assert result.position.tolist() == [0]
+        result = AmericanTF().run([100.0, 101.0, 102.0])
+        np.testing.assert_array_equal(result.pnl, 0.0)  # the ATR is never available
 
-        cfg = AmericanTFConfig()
-        system = AmericanTF(cfg)
-        pnl, units = system.run(volatile_close, volatile_high, volatile_low)
-
-        # Should handle extreme volatility
-        warmup = 50
-        assert np.isfinite(pnl[warmup:]).all()
-
-    def test_flat_market(self):
-        """Test with flat/sideways market."""
-        flat_close = np.full(100, 100.0) + 0.1 * np.random.randn(100)
-        flat_high = flat_close + 0.5
-        flat_low = flat_close - 0.5
-
-        cfg = AmericanTFConfig(q=2.0)  # Higher threshold for flat market
-        system = AmericanTF(cfg)
-        pnl, units = system.run(flat_close, flat_high, flat_low)
-
-        # Should produce minimal activity in flat market
-        assert len(pnl) == len(flat_close)
-        assert np.isfinite(pnl).all()
-
-    def test_pnl_calculation(self):
-        """Test P&L calculation accuracy."""
-        cfg = AmericanTFConfig()
-        system = AmericanTF(cfg)
-        pnl, units = system.run(self.close, self.high, self.low)
-
-        # Calculate manual P&L
-        price_changes = np.diff(self.close)
-        manual_pnl = np.zeros_like(pnl)
-        manual_pnl[1:] = units[:-1] * price_changes
-
-        # Should match calculated P&L
-        np.testing.assert_allclose(pnl, manual_pnl)
-
-    def test_units_constraints(self):
-        """Test that position units are reasonable."""
-        cfg = AmericanTFConfig(r_multiple=0.01)
-        system = AmericanTF(cfg)
-        pnl, units = system.run(self.close, self.high, self.low)
-
-        # Units should not be extremely large
-        max_abs_units = np.max(np.abs(units))
-        assert max_abs_units < 100  # Reasonable upper bound
-
-    def test_empty_input_validation(self):
-        """Test validation of empty inputs."""
-        cfg = AmericanTFConfig()
-        system = AmericanTF(cfg)
-
-        with pytest.raises(ValueError, match="Close prices cannot be empty"):
-            system.run(np.array([]))
-
-    def test_mismatched_input_shapes(self):
-        """Test validation of mismatched input shapes."""
-        cfg = AmericanTFConfig()
-        system = AmericanTF(cfg)
-
-        close = np.array([100.0, 110.0, 105.0])
-        high = np.array([105.0, 115.0])  # Different length
-        low = np.array([95.0, 105.0, 100.0])
-
-        with pytest.raises(ValueError, match="high, low, and close must have same shape"):
-            system.run(close, high, low)
-
-    def test_state_persistence(self):
-        """Test that position state is maintained correctly."""
-        # Create clear trending data
-        trend_close = np.array(
-            [100.0, 102.0, 104.0, 106.0, 108.0, 110.0, 108.0, 106.0, 104.0, 102.0]
-        )  # Up then down
-        trend_high = trend_close + 1.0
-        trend_low = trend_close - 1.0
-
-        cfg = AmericanTFConfig(
-            span_long=4,
-            span_short=2,
-            q=0.5,  # Easy entry
-            p=2.0,  # Stop loss
-            atr_period=3,
+    def test_close_only_equals_high_and_low_at_the_close(self):
+        close, _, _ = ohlc(5, 400)
+        cfg = AmericanTFConfig(span_long=30, span_short=5, atr_period=10, q=1.0, p=2.0)
+        np.testing.assert_array_equal(
+            AmericanTF(cfg).run(close).weights, AmericanTF(cfg).run(close, close, close).weights
         )
-        system = AmericanTF(cfg)
-        pnl, units = system.run(trend_close, trend_high, trend_low)
 
-        # Position should persist until exit conditions are met
-        # Check that positions don't change randomly
-        position_changes = np.where(np.abs(np.diff(units)) > 1e-10)[0]
-        # Should have some but not excessive position changes
-        assert len(position_changes) <= len(trend_close) // 2
+    def test_wider_ranges_mean_smaller_positions(self):
+        close, high, low = ohlc(6, 800)
+        cfg = AmericanTFConfig(span_long=30, span_short=5, atr_period=10, q=0.5, p=2.0)
+        narrow = AmericanTF(cfg).run(close)
+        wide = AmericanTF(cfg).run(close, high * 1.02, low * 0.98)
+        assert np.abs(wide.weights).max() < np.abs(narrow.weights).max()
 
-    def test_atr_dependency(self):
-        """Test system behavior when ATR is not available."""
-        # Use very short data where ATR might not be calculated initially
-        short_close = self.close[:10]
-        short_high = self.high[:10]
-        short_low = self.low[:10]
 
-        cfg = AmericanTFConfig(atr_period=8)  # Long ATR period
-        system = AmericanTF(cfg)
-        pnl, units = system.run(short_close, short_high, short_low)
+class TestInput:
+    def test_high_without_low_is_an_error(self):
+        close, high, low = ohlc(8, 50)
+        with pytest.raises(ValueError, match="both high and low"):
+            AmericanTF().run(close, high=high)
+        with pytest.raises(ValueError, match="both high and low"):
+            AmericanTF().run(close, low=low)
 
-        # Should handle gracefully when ATR is not available
-        assert len(pnl) == len(short_close)
-        assert len(units) == len(short_close)
+    @pytest.mark.parametrize(
+        ("close", "high", "low", "message"),
+        [
+            ([], None, None, "at least 1"),
+            ([1.0, 2.0], [2.0, 3.0, 4.0], [1.0, 1.0, 1.0], "same length"),
+            ([1.0, 2.0], [2.0, 1.0], [1.0, 1.5], "high must not be below low"),
+            ([1.0, 0.0], None, None, "positive"),
+            ([1.0, math.nan], None, None, "NaN"),
+            ([[1.0, 2.0]], None, None, "one-dimensional"),
+        ],
+    )
+    def test_rejects_invalid_prices(self, close, high, low, message):
+        with pytest.raises(ValueError, match=message):
+            AmericanTF().run(close, high, low)
 
-    def test_numerical_stability(self):
-        """Test numerical stability with edge cases."""
-        # Very small price movements
-        stable_close = 100.0 + 1e-6 * np.random.randn(100)
-        stable_high = stable_close + 1e-6
-        stable_low = stable_close - 1e-6
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"span_long": 0}, "span_long"),
+            ({"span_short": 0.5}, "span_short"),
+            ({"span_long": 20, "span_short": 20}, "smaller than span_long"),
+            ({"span_long": 20, "span_short": 30}, "smaller than span_long"),
+            ({"atr_period": 0}, "atr_period"),
+            ({"atr_period": 2.5}, "atr_period"),
+            ({"q": 0.0}, "q must"),
+            ({"q": -1.0}, "q must"),
+            ({"p": 0.0}, "p must"),
+            ({"r_multiple": 0.0}, "r_multiple"),
+            ({"r_multiple": math.inf}, "r_multiple"),
+            ({"weight_cap": 0.0}, "weight_cap"),
+        ],
+    )
+    def test_rejects_invalid_parameters(self, kwargs, message):
+        with pytest.raises(ValueError, match=message):
+            AmericanTFConfig(**kwargs)
 
-        cfg = AmericanTFConfig()
-        system = AmericanTF(cfg)
-        pnl, units = system.run(stable_close, stable_high, stable_low)
+    def test_default_configuration_is_the_one_of_the_paper(self):
+        cfg = AmericanTF().cfg
+        assert (cfg.span_long, cfg.span_short, cfg.atr_period) == (250, 20, 33)
+        assert (cfg.q, cfg.p, cfg.r_multiple, cfg.weight_cap) == (5.0, 5.0, 0.01, None)
 
-        # Should handle small movements without numerical issues
-        assert np.isfinite(pnl).all()
-        assert np.isfinite(units).all()
-
-    def test_configuration_immutability(self):
-        """Test that configuration doesn't change during execution."""
-        cfg = AmericanTFConfig(q=2.5, p=3.5, r_multiple=0.015)
-        original_q = cfg.q
-        original_p = cfg.p
-        original_r = cfg.r_multiple
-
-        system = AmericanTF(cfg)
-        system.run(self.close, self.high, self.low)
-
-        # Configuration should remain unchanged
-        assert cfg.q == original_q
-        assert cfg.p == original_p
-        assert cfg.r_multiple == original_r
-
-    def test_long_vs_short_positions(self):
-        """Test that system can take both long and short positions."""
-        # Create data with both up and down trends
-        up_trend = np.linspace(100, 120, 100)
-        down_trend = np.linspace(120, 100, 100)
-        mixed_close = np.concatenate([up_trend, down_trend])
-        mixed_high = mixed_close * 1.005
-        mixed_low = mixed_close * 0.995
-
-        cfg = AmericanTFConfig(span_long=20, span_short=5, q=1.0, atr_period=10)
-        system = AmericanTF(cfg)
-        pnl, units = system.run(mixed_close, mixed_high, mixed_low)
-
-        # Should have both positive and negative positions
-        positive_units = units[units > 1e-10]
-        negative_units = units[units < -1e-10]
-
-        # Expect some of both (though not guaranteed)
-        assert len(positive_units) + len(negative_units) > 0
-
-    def test_performance_metrics_validity(self):
-        """Test that performance metrics are reasonable."""
-        cfg = AmericanTFConfig()
-        system = AmericanTF(cfg)
-        pnl, units = system.run(self.close, self.high, self.low)
-
-        # Calculate basic performance metrics
-        valid_pnl = pnl[~np.isnan(pnl)]
-        if len(valid_pnl) > 50:  # Need sufficient data
-            total_pnl = np.sum(valid_pnl)
-            pnl_vol = np.std(valid_pnl)
-
-            # Metrics should be finite
-            assert np.isfinite(total_pnl)
-            assert np.isfinite(pnl_vol)
-            assert pnl_vol >= 0
-
-    def test_extreme_parameters_edge_cases(self):
-        """Test with extreme but valid parameter values."""
-        # Very sensitive system
-        cfg_sensitive = AmericanTFConfig(
-            span_long=3, span_short=1, atr_period=1, q=0.1, p=0.1, r_multiple=0.001
+    def test_numpy_scalars_in_the_configuration_do_not_change_the_arithmetic(self):
+        # np.float32(3.0) is exactly 3, but left in place it would turn the stop
+        # and the weight into single-precision numbers: wrong in the eighth digit
+        close, high, low = ohlc(15, 600)
+        plain = AmericanTFConfig(span_long=40, span_short=8, atr_period=10, q=1.0, p=3.0)
+        typed = AmericanTFConfig(
+            span_long=np.float32(40),
+            span_short=np.int64(8),
+            atr_period=np.int32(10),
+            q=np.float32(1.0),
+            p=np.float32(3.0),
+            r_multiple=np.float64(0.01),
+            weight_cap=None,
         )
-        system = AmericanTF(cfg_sensitive)
-        pnl, units = system.run(self.close, self.high, self.low)
-        assert np.isfinite(pnl[5:]).all()
+        assert typed == plain
+        for name in ("span_long", "span_short", "q", "p", "r_multiple"):
+            assert type(getattr(typed, name)) is float, name
+        assert type(typed.atr_period) is int
+        expected = AmericanTF(plain).run(close, high, low)
+        result = AmericanTF(typed).run(close, high, low)
+        assert np.any(expected.position != 0)
+        for field in dataclasses.fields(AmericanTFResult):
+            np.testing.assert_array_equal(
+                getattr(result, field.name), getattr(expected, field.name)
+            )
 
-        # Very conservative system
-        cfg_conservative = AmericanTFConfig(
-            span_long=200, span_short=50, atr_period=50, q=10.0, p=10.0, r_multiple=0.1
+    def test_unpacks_into_profit_and_weights(self):
+        close, high, low = ohlc(9, 300)
+        result = AmericanTF(AmericanTFConfig(span_long=30, span_short=5, atr_period=10)).run(
+            close, high, low
         )
-        system = AmericanTF(cfg_conservative)
-        pnl, units = system.run(self.close, self.high, self.low)
-        warmup = 250
-        if warmup < len(pnl):
-            assert np.isfinite(pnl[warmup:]).all()
-
-    def test_reproducibility(self):
-        """Test that results are reproducible with same inputs."""
-        cfg = AmericanTFConfig()
-        system1 = AmericanTF(cfg)
-        system2 = AmericanTF(cfg)
-
-        pnl1, units1 = system1.run(self.close, self.high, self.low)
-        pnl2, units2 = system2.run(self.close, self.high, self.low)
-
-        # Results should be identical
-        np.testing.assert_allclose(pnl1, pnl2)
-        np.testing.assert_allclose(units1, units2)
+        pnl, weights = result
+        assert pnl is result.pnl
+        assert weights is result.weights
+        assert result.position.dtype == np.int8
+        assert len(result) == 2
+        assert result[0] is result.pnl
+        assert result[1] is result.weights
+        with pytest.raises(IndexError):
+            result[2]
