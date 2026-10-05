@@ -1,458 +1,384 @@
+"""Time-series momentum against equation (A.16) evaluated day by day."""
+
+from __future__ import annotations
+
+import dataclasses
+import math
+
 import numpy as np
 import pytest
-import math
-from tfunify.tsmom import TSMOM, TSMOMConfig
-
-
-class TestTSMOMConfig:
-    """Comprehensive tests for TSMOMConfig validation."""
-
-    def test_default_configuration(self):
-        """Test default configuration is valid."""
-        cfg = TSMOMConfig()
-        assert cfg.sigma_target_annual == 0.15
-        assert cfg.a == 260
-        assert cfg.span_sigma == 33
-        assert cfg.L == 10
-        assert cfg.M == 10
-
-    def test_sigma_target_validation(self):
-        """Test sigma_target_annual validation."""
-        # Valid values
-        TSMOMConfig(sigma_target_annual=0.01)
-        TSMOMConfig(sigma_target_annual=1.0)
-
-        # Invalid values
-        with pytest.raises(ValueError, match="sigma_target_annual must be positive"):
-            TSMOMConfig(sigma_target_annual=0.0)
-        with pytest.raises(ValueError, match="sigma_target_annual must be positive"):
-            TSMOMConfig(sigma_target_annual=-0.1)
-
-    def test_trading_days_validation(self):
-        """Test trading days per year validation."""
-        # Valid values
-        TSMOMConfig(a=252)
-        TSMOMConfig(a=365)
-        TSMOMConfig(a=1)
-
-        # Invalid values
-        with pytest.raises(ValueError, match="a \\(trading days per year\\) must be positive"):
-            TSMOMConfig(a=0)
-        with pytest.raises(ValueError, match="a \\(trading days per year\\) must be positive"):
-            TSMOMConfig(a=-260)
-
-    def test_span_sigma_validation(self):
-        """Test span_sigma validation."""
-        # Valid values
-        TSMOMConfig(span_sigma=1)
-        TSMOMConfig(span_sigma=100)
-
-        # Invalid values
-        with pytest.raises(ValueError, match="span_sigma must be >= 1"):
-            TSMOMConfig(span_sigma=0)
-        with pytest.raises(ValueError, match="span_sigma must be >= 1"):
-            TSMOMConfig(span_sigma=-5)
-
-    def test_L_validation(self):
-        """Test L (block length) validation."""
-        # Valid values
-        TSMOMConfig(L=1)
-        TSMOMConfig(L=100)
-
-        # Invalid values
-        with pytest.raises(ValueError, match="L \\(block length\\) must be >= 1"):
-            TSMOMConfig(L=0)
-        with pytest.raises(ValueError, match="L \\(block length\\) must be >= 1"):
-            TSMOMConfig(L=-10)
-
-    def test_M_validation(self):
-        """Test M (number of blocks) validation."""
-        # Valid values
-        TSMOMConfig(M=1)
-        TSMOMConfig(M=50)
-
-        # Invalid values
-        with pytest.raises(ValueError, match="M \\(number of blocks\\) must be >= 1"):
-            TSMOMConfig(M=0)
-        with pytest.raises(ValueError, match="M \\(number of blocks\\) must be >= 1"):
-            TSMOMConfig(M=-5)
-
-    def test_extreme_valid_combinations(self):
-        """Test extreme but valid parameter combinations."""
-        # Very small blocks
-        TSMOMConfig(L=1, M=1)
-
-        # Very large blocks
-        TSMOMConfig(L=100, M=50)
-
-        # Unbalanced combinations
-        TSMOMConfig(L=1, M=100)
-        TSMOMConfig(L=100, M=1)
-
-
-class TestTSMOM:
-    """Comprehensive tests for TSMOM system."""
-
-    def setup_method(self):
-        """Set up test data before each test."""
-        np.random.seed(42)
-        self.n = 2000  # Need more data for TSMOM blocks
-
-        # Generate data with momentum characteristics
-        base_returns = 0.0002 + 0.015 * np.random.randn(self.n)
-
-        # Add momentum persistence
-        momentum_returns = np.zeros(self.n)
-        momentum_returns[0] = base_returns[0]
-        for i in range(1, self.n):
-            # Momentum with persistence
-            momentum_returns[i] = base_returns[i] + 0.1 * momentum_returns[i - 1]
-
-        self.prices = 100 * np.cumprod(1 + np.r_[0.0, momentum_returns[1:]])
-        self.returns = np.diff(np.log(self.prices))
-        self.returns = np.r_[0.0, self.returns]
-
-    def test_basic_functionality(self):
-        """Test basic TSMOM functionality."""
-        cfg = TSMOMConfig(sigma_target_annual=0.12, span_sigma=20, L=10, M=8)
-        system = TSMOM(cfg)
-        pnl, weights, signal_grid, volatility = system.run_from_prices(self.prices)
-
-        # Basic shape checks
-        assert len(pnl) == len(self.prices)
-        assert len(weights) == len(self.prices)
-        assert len(signal_grid) == len(self.prices)
-        assert len(volatility) == len(self.prices)
-
-        # After sufficient warmup, values should be finite
-        min_required = cfg.L * cfg.M + cfg.span_sigma + 10
-        if min_required < len(self.prices):
-            assert np.isfinite(pnl[min_required:]).all()
-            assert np.isfinite(weights[min_required:]).all()
-            assert np.isfinite(volatility[min_required:]).all()
-
-    def test_run_from_returns_equivalence(self):
-        """Test that run_from_prices and run_from_returns give same results."""
-        cfg = TSMOMConfig(L=5, M=6)
-        system = TSMOM(cfg)
-
-        pnl1, weights1, signal1, vol1 = system.run_from_prices(self.prices)
-        pnl2, weights2, signal2, vol2 = system.run_from_returns(self.returns)
-
-        # Results should be identical
-        np.testing.assert_allclose(pnl1, pnl2)
-        np.testing.assert_allclose(weights1, weights2)
-        np.testing.assert_allclose(signal1, signal2)
-        np.testing.assert_allclose(vol1, vol2)
-
-    def test_block_structure_signals(self):
-        """Test that signals are generated at correct block intervals."""
-        L, M = 5, 4
-        cfg = TSMOMConfig(L=L, M=M, span_sigma=10)
-        system = TSMOM(cfg)
-        pnl, weights, signal_grid, volatility = system.run_from_prices(self.prices)
-
-        # Signals should be generated at grid points (multiples of L)
-        np.arange(0, len(self.prices), L)
-        non_zero_signals = signal_grid[signal_grid != 0]
-
-        # Should have some signals generated
-        assert len(non_zero_signals) > 0
-
-        # Check that signals appear at expected intervals
-        signal_indices = np.where(signal_grid != 0)[0]
-        if len(signal_indices) > 0:
-            # Most signal indices should be multiples of L
-            grid_aligned = signal_indices % L == 0
-            assert np.mean(grid_aligned) > 0.8  # Most should be grid-aligned
-
-    def test_signal_calculation_logic(self):
-        """Test signal calculation logic."""
-        # Create simple trending data for easier verification
-        L, M = 3, 2
-        trend_returns = np.array([0.0, 0.01, 0.01, 0.01, -0.01, -0.01, -0.01, 0.02, 0.02])
-        100 * np.cumprod(1 + trend_returns)
-
-        cfg = TSMOMConfig(L=L, M=M, span_sigma=2, sigma_target_annual=0.1)
-        system = TSMOM(cfg)
-        pnl, weights, signal_grid, volatility = system.run_from_returns(trend_returns)
-
-        # Should produce some signals
-        assert len(signal_grid) == len(trend_returns)
-
-    def test_volatility_targeting(self):
-        """Test volatility targeting."""
-        target_vol = 0.08
-        cfg = TSMOMConfig(sigma_target_annual=target_vol)
-        system = TSMOM(cfg)
-        pnl, weights, signal_grid, volatility = system.run_from_prices(self.prices)
-
-        valid_pnl = pnl[~np.isnan(pnl)]
-        if len(valid_pnl) > 100:
-            realized_vol = np.std(valid_pnl) * np.sqrt(cfg.a)
-
-            # Allow wider bounds for TSMOM due to signal discretization
-            assert 0.2 * target_vol < realized_vol < 5.0 * target_vol
-
-    def test_weight_forward_filling(self):
-        """Test that weights are forward-filled between grid points."""
-        L = 10
-        cfg = TSMOMConfig(L=L, M=5, span_sigma=10)
-        system = TSMOM(cfg)
-        pnl, weights, signal_grid, volatility = system.run_from_prices(self.prices)
-
-        # Weights should be forward-filled between grid points
-        # Check that weights don't change between grid points (except at boundaries)
-        for i in range(L, len(weights) - L, L):
-            # Within a block, weights should be constant (forward-filled)
-            block_weights = weights[i : i + L]
-            if np.any(np.isfinite(block_weights)):
-                # If any weights in block are finite, check for consistency
-                finite_weights = block_weights[np.isfinite(block_weights)]
-                if len(finite_weights) > 1:
-                    np.testing.assert_allclose(finite_weights, finite_weights[0], atol=1e-10)
-
-    def test_different_block_sizes(self):
-        """Test various block size combinations."""
-        block_combinations = [
-            (1, 10),  # Very short blocks, many blocks
-            (20, 3),  # Long blocks, few blocks
-            (5, 5),  # Balanced
-            (15, 8),  # Medium blocks
-        ]
-
-        for L, M in block_combinations:
-            cfg = TSMOMConfig(L=L, M=M, span_sigma=10)
-            system = TSMOM(cfg)
-
-            # Need sufficient data for the configuration
-            min_required = L * M + 50
-            if len(self.prices) >= min_required:
-                pnl, weights, signal_grid, volatility = system.run_from_prices(self.prices)
-
-                # Should produce valid results
-                warmup = L * M + 20
-                assert np.isfinite(pnl[warmup:]).all()
-
-    def test_insufficient_data_error(self):
-        """Test error handling with insufficient data."""
-        # Configuration requiring more data than available
-        cfg = TSMOMConfig(L=50, M=20)  # Needs 1000+ observations
-        system = TSMOM(cfg)
-
-        # Use insufficient data
-        short_prices = self.prices[:500]
-
-        with pytest.raises(ValueError, match="Returns array too short"):
-            system.run_from_prices(short_prices)
-
-    def test_minimal_sufficient_data(self):
-        """Test with minimal sufficient data."""
-        L, M = 5, 4
-        cfg = TSMOMConfig(L=L, M=M, span_sigma=5)
-        system = TSMOM(cfg)
-
-        # Use just enough data
-        min_required = L * M + 10
-        minimal_prices = self.prices[: min_required + 50]
-
-        pnl, weights, signal_grid, volatility = system.run_from_prices(minimal_prices)
-        assert len(pnl) == len(minimal_prices)
-
-    def test_momentum_detection(self):
-        """Test momentum detection capability."""
-        # Create clear momentum data
-        np.random.seed(789)
-        n = 500
-
-        # Strong positive momentum
-        mom_returns = np.zeros(n)
-        mom_returns[0] = 0.01
-        for i in range(1, n):
-            mom_returns[i] = 0.8 * mom_returns[i - 1] + 0.005 + 0.01 * np.random.randn()
-
-        mom_prices = 100 * np.cumprod(1 + np.r_[0.0, mom_returns[1:]])
-
-        cfg = TSMOMConfig(L=10, M=5, span_sigma=15)
-        system = TSMOM(cfg)
-        pnl, weights, signal_grid, volatility = system.run_from_prices(mom_prices)
-
-        # Should detect positive momentum (weights should be predominantly positive)
-        valid_weights = weights[~np.isnan(weights)]
-        if len(valid_weights) > 50:
-            avg_weight = np.mean(valid_weights)
-            # With strong positive momentum, average weight should be positive
-            assert avg_weight > 0
-
-    def test_mean_reverting_data(self):
-        """Test behavior on mean-reverting data."""
-        # Create mean-reverting data
-        np.random.seed(456)
-        n = 800
-        mr_returns = np.zeros(n)
-        mr_returns[0] = 0.01 * np.random.randn()
-        for i in range(1, n):
-            mr_returns[i] = -0.2 * mr_returns[i - 1] + 0.01 * np.random.randn()
-
-        mr_prices = 100 * np.cumprod(1 + np.r_[0.0, mr_returns[1:]])
-
-        cfg = TSMOMConfig(L=8, M=6)
-        system = TSMOM(cfg)
-        pnl, weights, signal_grid, volatility = system.run_from_prices(mr_prices)
-
-        # Should handle mean-reverting data without errors
-        warmup = cfg.L * cfg.M + 30
-        assert np.isfinite(pnl[warmup:]).all()
-
-    def test_pnl_calculation_consistency(self):
-        """Test P&L calculation consistency."""
-        cfg = TSMOMConfig(L=5, M=4)
-        system = TSMOM(cfg)
-        pnl, weights, signal_grid, volatility = system.run_from_prices(self.prices)
-
-        # P&L should be w[t-1] * r[t]
-        returns = np.diff(np.log(self.prices))
-        returns = np.r_[0.0, returns]
-
-        # Manual P&L calculation
-        manual_pnl = np.zeros_like(pnl)
-        manual_pnl[1:] = weights[:-1] * returns[1:]
-
-        np.testing.assert_allclose(pnl, manual_pnl)
-
-    def test_signal_normalization(self):
-        """Test signal normalization factor."""
-        L, M = 6, 4
-        cfg = TSMOMConfig(L=L, M=M)
-        system = TSMOM(cfg)
-        pnl, weights, signal_grid, volatility = system.run_from_prices(self.prices)
-
-        # Signal should be normalized by sqrt(M * L)
-        norm_factor = math.sqrt(M * L)
-        non_zero_signals = signal_grid[signal_grid != 0]
-
-        # Signals should be reasonable magnitude (scaled by normalization)
-        if len(non_zero_signals) > 0:
-            max_signal = np.max(np.abs(non_zero_signals))
-            # Should be bounded by normalization factor
-            assert max_signal <= norm_factor * 2  # Allow some reasonable multiple
-
-    def test_volatility_estimates(self):
-        """Test volatility estimation."""
-        cfg = TSMOMConfig(span_sigma=20)
-        system = TSMOM(cfg)
-        pnl, weights, signal_grid, volatility = system.run_from_prices(self.prices)
-
-        valid_vol = volatility[~np.isnan(volatility)]
-        assert np.all(valid_vol > 0)
-
-        # Match implemented bounds
-        assert np.all(valid_vol >= 0.0005)  # 0.05% daily minimum
-        assert np.all(valid_vol <= 0.15)
-
-    def test_extreme_parameter_combinations(self):
-        """Test with extreme but valid parameters."""
-        # Very short term
-        cfg_short = TSMOMConfig(L=1, M=2, span_sigma=2, sigma_target_annual=0.05)
-        system = TSMOM(cfg_short)
-
-        # Need minimal data for short-term config
-        short_data = self.prices[:50]
-        pnl, weights, signal_grid, volatility = system.run_from_prices(short_data)
-        assert len(pnl) == len(short_data)
-
-        # Very long term (if we have enough data)
-        if len(self.prices) >= 1000:
-            cfg_long = TSMOMConfig(L=20, M=10, span_sigma=50, sigma_target_annual=0.25)
-            system = TSMOM(cfg_long)
-            pnl, weights, signal_grid, volatility = system.run_from_prices(self.prices)
-            warmup = 250
-            assert np.isfinite(pnl[warmup:]).all()
-
-    def test_empty_returns_validation(self):
-        """Test validation of empty returns."""
-        cfg = TSMOMConfig()
-        system = TSMOM(cfg)
-
-        with pytest.raises(ValueError, match="Returns array cannot be empty"):
-            system.run_from_returns(np.array([]))
-
-        with pytest.raises(ValueError, match="Returns array cannot be empty"):
-            system.run_from_prices(np.array([]))
-
-    def test_configuration_immutability(self):
-        """Test that configuration doesn't change during execution."""
-        cfg = TSMOMConfig(L=8, M=6, sigma_target_annual=0.12)
-        original_L = cfg.L
-        original_M = cfg.M
-        original_sigma = cfg.sigma_target_annual
-
-        system = TSMOM(cfg)
-        system.run_from_prices(self.prices)
-
-        # Configuration should remain unchanged
-        assert cfg.L == original_L
-        assert cfg.M == original_M
-        assert cfg.sigma_target_annual == original_sigma
-
-    def test_constant_price_handling(self):
-        """Test handling of constant prices."""
-        constant_prices = np.full(200, 100.0)
-        cfg = TSMOMConfig(L=5, M=4)
-        system = TSMOM(cfg)
-        pnl, weights, signal_grid, volatility = system.run_from_prices(constant_prices)
-
-        # Should handle gracefully
-        assert len(pnl) == len(constant_prices)
-        # P&L should be zero (no price changes)
-        np.testing.assert_allclose(pnl, 0.0, atol=1e-10)
-
-    def test_numerical_stability(self):
-        """Test numerical stability with edge cases."""
-        # Very small price movements
-        small_prices = 100.0 + 1e-8 * np.cumsum(np.random.randn(500))
-        cfg = TSMOMConfig(L=5, M=6)
-        system = TSMOM(cfg)
-        pnl, weights, signal_grid, volatility = system.run_from_prices(small_prices)
-
-        # Should handle small movements without numerical issues
-        assert np.isfinite(pnl).all()
-        assert np.isfinite(weights).all()
-        assert np.isfinite(volatility).all()
-
-    def test_reproducibility(self):
-        """Test that results are reproducible with same inputs."""
-        cfg = TSMOMConfig(L=6, M=5)
-        system1 = TSMOM(cfg)
-        system2 = TSMOM(cfg)
-
-        pnl1, weights1, signal1, vol1 = system1.run_from_prices(self.prices)
-        pnl2, weights2, signal2, vol2 = system2.run_from_prices(self.prices)
-
-        # Results should be identical
-        np.testing.assert_allclose(pnl1, pnl2)
-        np.testing.assert_allclose(weights1, weights2)
-        np.testing.assert_allclose(signal1, signal2)
-        np.testing.assert_allclose(vol1, vol2)
-
-    def test_performance_metrics_validity(self):
-        """Test that performance metrics are reasonable."""
-        cfg = TSMOMConfig()
-        system = TSMOM(cfg)
-        pnl, weights, signal_grid, volatility = system.run_from_prices(self.prices)
-
-        # Calculate basic performance metrics
-        valid_pnl = pnl[~np.isnan(pnl)]
-        if len(valid_pnl) > 100:
-            total_pnl = np.sum(valid_pnl)
-            pnl_vol = np.std(valid_pnl)
-
-            # Metrics should be finite
-            assert np.isfinite(total_pnl)
-            assert np.isfinite(pnl_vol)
-            assert pnl_vol >= 0
-
-            # Sharpe ratio should be finite
-            if pnl_vol > 0:
-                sharpe = np.mean(valid_pnl) / pnl_vol
-                assert np.isfinite(sharpe)
+
+from tests import reference
+from tfunify import TSMOM, TSMOMConfig, TSMOMResult, pct_returns_from_prices
+
+
+@pytest.fixture
+def rng():
+    return np.random.default_rng(271828)
+
+
+def returns(rng, n=500, vol=0.011, drift=0.0002):
+    return drift + vol * rng.standard_normal(n)
+
+
+CONFIGS = [
+    TSMOMConfig(L=5, M=4, span_sigma=10),
+    TSMOMConfig(L=10, M=10, span_sigma=33),
+    TSMOMConfig(L=1, M=7, span_sigma=5),
+    TSMOMConfig(L=7, M=1, span_sigma=5, warmup=3),
+    TSMOMConfig(L=3, M=5, span_sigma=40, sigma_target_annual=0.2, a=252),
+    TSMOMConfig(L=5, M=4, span_sigma=10, signs="period"),
+    TSMOMConfig(L=10, M=10, span_sigma=33, signs="period"),
+    TSMOMConfig(L=4, M=3, span_sigma=30, signs="period"),
+    TSMOMConfig(L=1, M=6, span_sigma=5, signs="period", warmup=2),
+]
+
+
+class TestDefinition:
+    @pytest.mark.parametrize("cfg", CONFIGS)
+    def test_matches_the_definition_evaluated_day_by_day(self, rng, cfg):
+        r = returns(rng)
+        result = TSMOM(cfg).run_from_returns(r)
+        pnl, weights, signal, rebalance = reference.tsmom(
+            r,
+            target=cfg.sigma_target_annual,
+            a=cfg.a,
+            span_sigma=cfg.span_sigma,
+            L=cfg.L,
+            M=cfg.M,
+            signs=cfg.signs,
+            warmup=cfg.warmup,
+        )
+        np.testing.assert_array_equal(result.rebalance, rebalance)
+        np.testing.assert_allclose(result.signal, signal, rtol=1e-12, atol=1e-15)
+        np.testing.assert_allclose(result.weights, weights, rtol=1e-10, atol=1e-15)
+        np.testing.assert_allclose(result.pnl, pnl, rtol=1e-10, atol=1e-17)
+        assert np.any(result.weights != 0.0)
+
+    def test_worked_example_daily_signs(self):
+        # L = 2, M = 2: lookback of four days, rebalanced every second day
+        r = np.array([0.01, 0.02, -0.01, 0.03, 0.01, -0.02, -0.01, -0.03])
+        result = TSMOM(TSMOMConfig(L=2, M=2, span_sigma=3, warmup=1)).run_from_returns(r)
+        np.testing.assert_array_equal(
+            result.rebalance, [False, False, False, True, False, True, False, True]
+        )
+        # day 3: signs + + - +  -> 2 / sqrt(4);  day 5: - + + -  -> 0;  day 7: + - - -  -> -1
+        np.testing.assert_allclose(result.signal, [0, 0, 0, 1, 1, 0, 0, -1])
+        sigma = result.volatility
+        scale = 0.15 / math.sqrt(260)
+        np.testing.assert_allclose(
+            result.weights,
+            [0, 0, 0, scale / sigma[2], scale / sigma[2], 0, 0, -scale / sigma[6]],
+            rtol=1e-14,
+        )
+
+    def test_worked_example_period_signs(self):
+        # one sign per two-day period, of the sum of its normalised returns
+        r = np.array([0.01, 0.02, 0.01, 0.03, 0.01, 0.02, -0.01, -0.03])
+        cfg = TSMOMConfig(L=2, M=2, span_sigma=3, warmup=1, signs="period")
+        result = TSMOM(cfg).run_from_returns(r)
+        root = math.sqrt(2)
+        # periods: + + + -.  Day 3: the lookback starts at day 0, which cannot be
+        # normalised (one day of warm-up), so no signal.  Day 5: (+ +) / sqrt(2).
+        # Day 7: (+ -) / sqrt(2) = 0.
+        np.testing.assert_allclose(result.signal, [0, 0, 0, 0, 0, root, root, 0], atol=1e-15)
+        scale = 0.15 / math.sqrt(260)
+        np.testing.assert_allclose(
+            result.weights,
+            [
+                0,
+                0,
+                0,
+                0,
+                0,
+                root * scale / result.volatility[4],
+                root * scale / result.volatility[4],
+                0,
+            ],
+            rtol=1e-14,
+        )
+
+    def test_signal_depends_on_the_lookback_only_through_its_length(self, rng):
+        # (A.16): M periods of L days hold M * L daily signs; L sets the rebalancing
+        r = returns(rng, 600)
+        weekly = TSMOM(TSMOMConfig(L=5, M=12)).run_from_returns(r)
+        monthly = TSMOM(TSMOMConfig(L=20, M=3)).run_from_returns(r)
+        both = weekly.rebalance & monthly.rebalance
+        assert both.sum() == monthly.rebalance.sum() > 5
+        np.testing.assert_array_equal(weekly.signal[both], monthly.signal[both])
+        np.testing.assert_array_equal(weekly.weights[both], monthly.weights[both])
+
+    def test_daily_signal_ignores_the_volatility_estimate(self, rng):
+        r = returns(rng)
+        a = TSMOM(TSMOMConfig(L=5, M=6, span_sigma=10)).run_from_returns(r)
+        b = TSMOM(TSMOMConfig(L=5, M=6, span_sigma=80)).run_from_returns(r)
+        np.testing.assert_array_equal(a.signal, b.signal)
+        assert not np.array_equal(a.weights, b.weights)
+
+    def test_default_configuration_is_the_one_of_the_paper(self):
+        cfg = TSMOM().cfg
+        assert (cfg.L, cfg.M, cfg.span_sigma, cfg.signs) == (10, 10, 33, "daily")
+        assert (cfg.sigma_target_annual, cfg.a) == (0.15, 260)
+
+
+class TestGrid:
+    @pytest.mark.parametrize("cfg", CONFIGS)
+    def test_rebalancing_days_close_the_periods(self, rng, cfg):
+        result = TSMOM(cfg).run_from_returns(returns(rng, 300))
+        days = np.flatnonzero(result.rebalance) + 1  # counted from one
+        np.testing.assert_array_equal(days, np.arange(cfg.L * cfg.M, 301, cfg.L))
+
+    @pytest.mark.parametrize("cfg", CONFIGS)
+    def test_position_is_held_between_rebalancing_days(self, rng, cfg):
+        result = TSMOM(cfg).run_from_returns(returns(rng, 300))
+        quiet = ~result.rebalance
+        quiet[0] = False
+        np.testing.assert_array_equal(np.diff(result.weights)[quiet[1:]], 0.0)
+        np.testing.assert_array_equal(np.diff(result.signal)[quiet[1:]], 0.0)
+        first = np.flatnonzero(result.rebalance)[0]
+        np.testing.assert_array_equal(result.weights[:first], 0.0)
+        np.testing.assert_array_equal(result.signal[:first], 0.0)
+
+    def test_a_zero_signal_closes_the_position(self):
+        # 0.1.3 kept the previous weight whenever the new one was zero
+        up, flat = [0.01] * 4, [0.01, -0.01, 0.01, -0.01]
+        r = np.array(up + flat + up + flat + flat)
+        result = TSMOM(TSMOMConfig(L=4, M=1, span_sigma=3, warmup=1)).run_from_returns(r)
+        np.testing.assert_array_equal(result.signal[3::4], [2, 0, 2, 0, 0])
+        assert np.all(result.weights[3:7] > 0)
+        np.testing.assert_array_equal(result.weights[7:11], 0.0)
+        assert np.all(result.weights[11:15] > 0)
+        np.testing.assert_array_equal(result.weights[15:], 0.0)
+
+    def test_weight_uses_the_volatility_of_the_day_before(self, rng):
+        cfg = TSMOMConfig(L=5, M=4, span_sigma=10)
+        r = returns(rng)
+        result = TSMOM(cfg).run_from_returns(r)
+        days = np.flatnonzero(result.rebalance)
+        np.testing.assert_allclose(
+            result.weights[days],
+            result.signal[days] * 0.15 / (math.sqrt(260) * result.volatility[days - 1]),
+            rtol=1e-12,
+        )
+
+    def test_no_weight_until_the_volatility_is_available(self, rng):
+        cfg = TSMOMConfig(L=2, M=2, span_sigma=30)
+        # every day up, so that the signal is 4 / sqrt(4) at every rebalancing
+        result = TSMOM(cfg).run_from_returns(np.abs(returns(rng, 200)) + 1e-4)
+        np.testing.assert_array_equal(result.signal[3:], 2.0)
+        # sigma exists from index 29; a rebalancing day t needs sigma[t-1], and
+        # the rebalancing days are the odd ones
+        np.testing.assert_array_equal(result.weights[:31], 0.0)
+        assert np.all(result.weights[31:] > 0.0)
+
+    def test_period_signs_wait_for_a_fully_normalised_lookback(self, rng):
+        # one period of two days, so that the signal is +/-1 and never zero by chance
+        cfg = TSMOMConfig(L=2, M=1, span_sigma=30, signs="period")
+        result = TSMOM(cfg).run_from_returns(returns(rng, 200))
+        # returns can be normalised from index 30; the lookback [t-1, t] must start there
+        assert np.all(result.signal[:31] == 0.0)
+        assert abs(result.signal[31]) == 1.0
+
+    def test_period_whose_returns_cancel_has_no_sign(self):
+        # With nu = 1/3 the volatility is 0.005 on days 3 and 4 alike, so the
+        # normalised returns of the second period are 0, -1 and +1: a sum of zero,
+        # which in floating point comes out as a few 1e-17 of either sign.
+        r = 0.005 * np.array([-2.0, 0.0, -2.0, 0.0, -1.0, 1.0, 1.0, 1.0, 1.0])
+        cfg = TSMOMConfig(L=3, M=1, span_sigma=2, signs="period")
+        result = TSMOM(cfg).run_from_returns(r)
+        np.testing.assert_allclose(result.volatility[3:5], 0.005, rtol=1e-14)
+        np.testing.assert_array_equal(result.rebalance, [0, 0, 1, 0, 0, 1, 0, 0, 1])
+        # first period: reaches into the warm-up; second: cancels; third: up
+        np.testing.assert_array_equal(result.signal[[2, 5, 8]], [0.0, 0.0, 1.0])
+        np.testing.assert_array_equal(result.weights[:8], 0.0)
+        assert result.weights[8] > 0.0
+
+    @pytest.mark.parametrize("cfg", CONFIGS)
+    def test_zero_returns_in_front_of_a_series(self, rng, cfg):
+        # A series padded with its first price, by a whole number of periods so
+        # that the grid stays where it was. Once the lookback has left the
+        # padding, nothing differs; and inside it no weight is of another order.
+        r = returns(rng, 400)
+        pad = 12 * cfg.L
+        plain = TSMOM(cfg).run_from_returns(r)
+        late = TSMOM(cfg).run_from_returns(np.r_[np.zeros(pad), r])
+        np.testing.assert_array_equal(late.volatility[pad:], plain.volatility)
+        assert np.all(np.isnan(late.volatility[:pad]))
+        start = cfg.L * cfg.M - 1  # the first rebalancing day of the unpadded series
+        for name in ("weights", "signal", "rebalance"):
+            np.testing.assert_array_equal(
+                getattr(late, name)[pad + start :], getattr(plain, name)[start:], err_msg=name
+            )
+        np.testing.assert_array_equal(late.pnl[pad + start + 1 :], plain.pnl[start + 1 :])
+        np.testing.assert_array_equal(late.weights[:pad], 0.0)
+        # in between, the lookback still holds padding, and the weights are sized
+        # with the volatility of the series itself
+        scale = cfg.sigma_target_annual / math.sqrt(cfg.a)
+        for t in np.flatnonzero(late.rebalance[: pad + start]):
+            lagged = plain.volatility[t - pad - 1] if t > pad else math.nan
+            expected = late.signal[t] * scale / lagged if np.isfinite(lagged) else 0.0
+            assert late.weights[t] == pytest.approx(expected, rel=1e-12)
+
+
+class TestTiming:
+    @pytest.mark.parametrize("cfg", CONFIGS)
+    def test_results_do_not_depend_on_later_data(self, rng, cfg):
+        r = returns(rng, 320)
+        full = TSMOM(cfg).run_from_returns(r)
+        for cut in (cfg.L * cfg.M, 173, 319):
+            part = TSMOM(cfg).run_from_returns(r[:cut])
+            for field in dataclasses.fields(TSMOMResult):
+                np.testing.assert_array_equal(
+                    getattr(part, field.name), getattr(full, field.name)[:cut]
+                )
+
+    def test_the_weight_of_a_day_earns_the_return_of_the_next(self, rng):
+        r = returns(rng)
+        result = TSMOM(CONFIGS[0]).run_from_returns(r)
+        assert result.pnl[0] == 0.0
+        np.testing.assert_allclose(result.pnl[1:], result.weights[:-1] * r[1:], rtol=1e-15)
+
+
+class TestStatistics:
+    @pytest.mark.parametrize("signs", ["daily", "period"])
+    @pytest.mark.parametrize(("L", "M"), [(10, 10), (5, 4), (21, 12)])
+    def test_signal_has_unit_variance_and_the_system_runs_at_its_target(self, signs, L, M):
+        rng = np.random.default_rng(3)
+        cfg = TSMOMConfig(L=L, M=M, signs=signs)
+        result = TSMOM(cfg).run_from_returns(0.01 * rng.standard_normal(400_000))
+        grid = result.signal[result.rebalance][50:]
+        # five standard errors, for the longest lookback (252 days: 1600
+        # independent values of the signal in the sample)
+        assert grid.std() == pytest.approx(1.0, abs=0.09)
+        assert abs(grid.mean()) < 0.15
+        # about 3 % above the target, because the volatility is estimated
+        assert 0.97 < result.pnl[2000:].std() * math.sqrt(cfg.a) / 0.15 < 1.10
+
+    def test_signal_is_bounded(self, rng):
+        r = np.abs(returns(rng))  # every day up
+        daily = TSMOM(TSMOMConfig(L=5, M=4)).run_from_returns(r)
+        period = TSMOM(TSMOMConfig(L=5, M=4, signs="period")).run_from_returns(r)
+        assert daily.signal.max() == pytest.approx(math.sqrt(20))
+        assert period.signal.max() == pytest.approx(math.sqrt(4))
+
+    def test_mirrored_returns_mirror_the_position(self, rng):
+        r = returns(rng)
+        for cfg in (CONFIGS[0], CONFIGS[5]):
+            base = TSMOM(cfg).run_from_returns(r)
+            mirrored = TSMOM(cfg).run_from_returns(-r)
+            np.testing.assert_allclose(mirrored.weights, -base.weights, rtol=1e-12)
+            np.testing.assert_allclose(mirrored.pnl, base.pnl, rtol=1e-12)
+
+    @pytest.mark.parametrize("scale", [1e-3, 50.0])
+    def test_scale_of_the_returns_does_not_matter(self, rng, scale):
+        r = returns(rng, drift=0.0)
+        for cfg in (CONFIGS[0], CONFIGS[5]):
+            base = TSMOM(cfg).run_from_returns(r)
+            scaled = TSMOM(cfg).run_from_returns(scale * r)
+            np.testing.assert_allclose(scaled.signal, base.signal, rtol=1e-12)
+            np.testing.assert_allclose(scaled.pnl, base.pnl, rtol=1e-10, atol=1e-15)
+
+
+class TestPrices:
+    def test_prices_are_turned_into_simple_returns(self, rng):
+        prices = 60 * np.cumprod(1 + returns(rng, 300))
+        cfg = CONFIGS[0]
+        from_prices = TSMOM(cfg).run_from_prices(prices)
+        from_returns = TSMOM(cfg).run_from_returns(pct_returns_from_prices(prices)[1:])
+        assert from_prices.pnl.shape == prices.shape
+        assert from_prices.pnl[0] == 0.0
+        assert from_prices.weights[0] == 0.0
+        assert not from_prices.rebalance[0]
+        assert math.isnan(from_prices.volatility[0])
+        for field in dataclasses.fields(TSMOMResult):
+            np.testing.assert_array_equal(
+                getattr(from_prices, field.name)[1:], getattr(from_returns, field.name)
+            )
+        # in price indices the rebalancing days are the multiples of L
+        np.testing.assert_array_equal(np.flatnonzero(from_prices.rebalance) % cfg.L, 0)
+
+    def test_constant_prices_give_no_position_and_no_nan(self):
+        for signs in ("daily", "period"):
+            result = TSMOM(TSMOMConfig(L=3, M=3, span_sigma=5, signs=signs)).run_from_prices(
+                np.full(80, 10.0)
+            )
+            np.testing.assert_array_equal(result.pnl, 0.0)
+            np.testing.assert_array_equal(result.weights, 0.0)
+            np.testing.assert_array_equal(result.signal, 0.0)
+
+    def test_series_shorter_than_the_lookback_is_an_error(self):
+        cfg = TSMOMConfig(L=10, M=10)
+        with pytest.raises(ValueError, match=r"M \* L = 100 returns, got 99"):
+            TSMOM(cfg).run_from_returns(np.full(99, 0.01))
+        with pytest.raises(ValueError, match=r"M \* L = 100 returns, got 99"):
+            TSMOM(cfg).run_from_prices(np.full(100, 50.0))
+        assert TSMOM(cfg).run_from_returns(np.full(100, 0.01)).rebalance.sum() == 1
+
+    @pytest.mark.parametrize(
+        ("prices", "message"),
+        [([100.0], "at least 2"), ([100.0, 0.0], "positive"), ([100.0, math.nan], "NaN")],
+    )
+    def test_rejects_invalid_prices(self, prices, message):
+        with pytest.raises(ValueError, match=message):
+            TSMOM().run_from_prices(prices)
+
+
+class TestRiskControls:
+    def test_weight_cap(self, rng):
+        r = returns(rng)
+        cfg = TSMOMConfig(L=5, M=4, span_sigma=10)
+        plain = TSMOM(cfg).run_from_returns(r)
+        capped = TSMOM(dataclasses.replace(cfg, weight_cap=0.7)).run_from_returns(r)
+        assert np.abs(plain.weights).max() > 0.7
+        np.testing.assert_array_equal(capped.weights, np.clip(plain.weights, -0.7, 0.7))
+
+    def test_floor(self, rng):
+        r = 1e-5 * rng.standard_normal(300)
+        cfg = TSMOMConfig(L=5, M=4, span_sigma=10, sigma_floor_annual=0.04)
+        result = TSMOM(cfg).run_from_returns(r)
+        np.testing.assert_allclose(result.volatility[10:], 0.04 / math.sqrt(260))
+        days = np.flatnonzero(result.rebalance)
+        np.testing.assert_allclose(result.weights[days], result.signal[days] * 0.15 / 0.04)
+
+
+class TestConfig:
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"sigma_target_annual": 0.0}, "sigma_target_annual"),
+            ({"a": -260}, "a must"),
+            ({"span_sigma": 0}, "span_sigma"),
+            ({"L": 0}, "L must"),
+            ({"L": 2.5}, "L must"),
+            ({"M": 0}, "M must"),
+            ({"M": True}, "M must"),
+            ({"signs": "weekly"}, "signs"),
+            ({"warmup": 0}, "warmup"),
+            ({"sigma_floor_annual": -1.0}, "sigma_floor_annual"),
+            ({"weight_cap": -2.0}, "weight_cap"),
+        ],
+    )
+    def test_rejects_invalid_parameters(self, kwargs, message):
+        with pytest.raises(ValueError, match=message):
+            TSMOMConfig(**kwargs)
+
+    def test_stores_plain_python_numbers(self):
+        typed = TSMOMConfig(
+            L=np.int64(5), M=np.int32(4), span_sigma=np.float32(10), a=np.int64(252)
+        )
+        assert typed == TSMOMConfig(L=5, M=4, span_sigma=10, a=252)
+        assert (type(typed.L), type(typed.M)) == (int, int)
+        assert (type(typed.span_sigma), type(typed.a)) == (float, float)
+
+    def test_unpacks_in_the_documented_order(self, rng):
+        result = TSMOM(CONFIGS[0]).run_from_returns(returns(rng))
+        pnl, weights, signal, volatility = result
+        assert pnl is result.pnl
+        assert weights is result.weights
+        assert signal is result.signal
+        assert volatility is result.volatility
+        assert result.rebalance.dtype == np.bool_
+        # the grid is reached by name: 0.1 returned four arrays
+        assert len(result) == 4
+        assert result[1] is result.weights
+        assert result[3] is result.volatility

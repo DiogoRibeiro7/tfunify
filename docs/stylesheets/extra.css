@@ -1,0 +1,75 @@
+/* Landing page hero */
+.hero {
+  margin: 0 0 2rem;
+  padding: 3rem 2rem 2.5rem;
+  border-radius: 0.8rem;
+  color: #fff;
+  background: linear-gradient(135deg, #1a237e 0%, #3949ab 45%, #00acc1 100%);
+  box-shadow: 0 0.4rem 1.6rem rgba(0, 0, 0, 0.25);
+}
+
+.md-typeset .hero h1 {
+  margin: 0 0 0.6rem;
+  color: #fff;
+  font-weight: 700;
+  font-size: 2.2rem;
+  line-height: 1.15;
+}
+
+.md-typeset .hero p {
+  max-width: 44rem;
+  font-size: 1.05rem;
+  opacity: 0.95;
+}
+
+.md-typeset .hero .md-button {
+  margin: 0.8rem 0.6rem 0 0;
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.85);
+}
+
+.md-typeset .hero .md-button--primary {
+  background-color: #fff;
+  border-color: #fff;
+  color: #1a237e;
+}
+
+.md-typeset .hero .md-button:hover,
+.md-typeset .hero .md-button:focus {
+  background-color: #00e5ff;
+  border-color: #00e5ff;
+  color: #0d1030;
+}
+
+@media screen and (max-width: 44.9375em) {
+  .hero {
+    padding: 2rem 1.2rem 1.6rem;
+  }
+  .md-typeset .hero h1 {
+    font-size: 1.6rem;
+  }
+}
+
+/* Wide tables scroll instead of squeezing */
+.md-typeset__table {
+  min-width: 100%;
+}
+
+/* Reference pages: keep long signatures readable */
+.md-typeset .doc-signature code {
+  white-space: pre-wrap;
+}
+
+/* Formulas wider than the column scroll inside their own box */
+.md-typeset div.arithmatex {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* MathJax keeps a copy of each formula for screen readers, hidden by clipping
+   but laid out at full width: near the right edge it would widen the page. */
+.md-typeset mjx-assistive-mml {
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+}
