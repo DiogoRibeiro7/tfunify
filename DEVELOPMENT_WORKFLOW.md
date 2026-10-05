@@ -1,178 +1,125 @@
-# Development Workflow
+# Development workflow
 
-This document outlines the recommended workflow for developing and releasing `tfunify`.
+How changes get into tfunify and how a release is made. The checks and the
+release are run by GitHub Actions; nothing is tagged or published by hand.
 
-## Branch Structure
+## Branches
 
-- **`main`**: Production-ready code. All releases are made from this branch.
-- **`develop`**: Integration branch for features. All development happens here.
-- **`feature/*`**: Feature branches for individual features or fixes.
+- **`develop`** is the default branch. All work lands here through pull
+  requests.
+- **`main`** holds the released code. It receives merges from `develop`, and
+  from a hotfix branch when a fix cannot wait for what is on `develop`.
+- **Feature branches** are cut from `develop` and merged back into it.
 
-## Development Process
-
-### 1\. Feature Development
+Both `develop` and `main` are protected and require signed commits. Commits
+that GitHub cannot verify block a pull request whatever the merge method, so
+sign them: `git commit -S`, or, for commits already made on a branch,
 
 ```bash
-# Start from develop
+git rebase --exec 'git commit --amend --no-edit -S' develop
+git push --force-with-lease
+```
+
+## Making a change
+
+```bash
 git checkout develop
-git pull origin develop
+git pull
+git checkout -b feature/short-description
 
-# Create feature branch
-git checkout -b feature/your-feature-name
+python -m pip install -e ".[dev]"
+# ... edit, add tests ...
+python -m pytest --cov
+ruff check . && ruff format --check .
+mypy
 
-# Make your changes
-# ... code, test, commit ...
-
-# Push feature branch
-git push origin feature/your-feature-name
-
-# Create Pull Request to develop branch
+git push -u origin feature/short-description
+# open a pull request against develop
 ```
 
-### 2\. Testing and Integration
+Add a line to the `Unreleased` section of `CHANGELOG.md` (create the section if
+it is not there) for anything a user would notice.
 
-All PRs to `develop` will trigger:
+## What CI runs
 
-- Unit tests across Python 3.10, 3.11, 3.12
-- Linting and type checking
-- Integration tests
+On every pull request and on every push to `develop` and `main`
+(`.github/workflows/ci.yml`):
 
-### 3\. Preparing for Release
+| Job | What it does |
+|---|---|
+| `lint` | `ruff check`, `ruff format --check` and `mypy --strict` on Python 3.10 and 3.14 |
+| `test (3.10)` ... `test (3.14)` | the test suite with coverage on Linux |
+| `other-systems` | the test suite on macOS and Windows |
+| `oldest-dependencies` | the test suite with NumPy 1.24 on Python 3.10 |
+| `integration-test` | builds the distribution, installs the wheel into a clean environment and runs the `tfu` command on a generated price file |
 
-```bash
-# When ready to release, merge develop to main
-git checkout main
-git pull origin main
-git merge develop
+The branch protection of `main` requires `test (3.10)`, `test (3.11)` and
+`test (3.12)`. Those names come from the id of the job and its matrix, so the
+`test` job in `ci.yml` must keep its id and must not be given a `name`.
 
-# Update version in pyproject.toml
-poetry version patch  # or minor/major
+When a test fails, its assertion is shown as an annotation on the summary page
+of the run and on the pull request, so the log does not have to be opened.
 
-# Update CHANGELOG.md with release notes
+The documentation site is built in strict mode by `.github/workflows/docs.yml`
+whenever the docs, the docstrings or the changelog change, and is published to
+GitHub Pages from the default branch. Publishing needs Pages to be enabled
+once, under *Settings > Pages*, with "GitHub Actions" as the source; until then
+the workflow builds and checks the site and skips the deployment with a notice.
 
-# Commit version bump
-git add pyproject.toml CHANGELOG.md
-git commit -m "Bump version to X.Y.Z"
+## Releasing
 
-# Push to main
-git push origin main
-```
+1. On `develop`, set the new `version` in `pyproject.toml` and in
+   `CITATION.cff`, and rename the `Unreleased` section of `CHANGELOG.md` to
+   `## [x.y.z] - YYYY-MM-DD`. The tests check that the two versions agree and
+   that the declared version has a changelog section that is not empty.
+2. Open a pull request from `develop` to `main` and merge it.
 
-### 4\. Creating a Release
+That is all. `.github/workflows/release.yml` runs on every push to `main` and
+compares the version in `pyproject.toml` with the existing tags. When the
+version has no tag yet, it
 
-**Important**: Only create release tags from the `main` branch!
+1. runs the complete CI workflow on that commit,
+2. builds the wheel and the source distribution and checks them,
+3. creates the tag `vx.y.z` and a GitHub release whose notes are the section of
+   the changelog for that version, with the two files attached,
+4. publishes them to PyPI, if that has been switched on (see below).
 
-```bash
-# Ensure you're on main and up to date
-git checkout main
-git pull origin main
+A push to `main` that does not change the version releases nothing. If a
+release run fails, fix the cause on `develop` and merge again: the version
+still has no tag, so the next run retries.
 
-# Create and push tag (this triggers the release workflow)
-git tag vX.Y.Z
-git push origin vX.Y.Z
-```
+After a release, merge `main` back into `develop` if the merge created a commit
+that `develop` does not have.
 
-The release workflow will:
+### Version numbers
 
-1. ✅ Verify the tag is on the `main` branch
-2. ✅ Run full test suite
-3. ✅ Test CLI functionality
-4. ✅ Verify version consistency
-5. ✅ Build and test the package
-6. ✅ Publish to PyPI
-7. ✅ Create GitHub release
+- **Major** (`x.0.0`): incompatible changes.
+- **Minor** (`0.y.0`): new functionality; before 1.0, also incompatible changes.
+- **Patch** (`0.0.z`): fixes.
 
-### 5\. After Release
+### Publishing to PyPI
 
-```bash
-# Merge main back to develop to keep branches in sync
-git checkout develop
-git merge main
-git push origin develop
-```
+The `pypi` job of the release workflow is skipped unless the repository
+variable `PUBLISH_TO_PYPI` is `true`. It uses PyPI's trusted publishing, so no
+token is stored in the repository. To switch it on:
 
-## Workflow Triggers
+1. On PyPI, register a trusted publisher for the project `tfunify`: owner
+   `DiogoRibeiro7`, repository `tfunify`, workflow `release.yml`, environment
+   `pypi`. While the project does not exist on PyPI, this is done as a
+   "pending publisher" under *Publishing* in the account settings.
+2. In the repository, under *Settings > Secrets and variables > Actions >
+   Variables*, create `PUBLISH_TO_PYPI` with the value `true`.
 
-### CI Tests (`test.yml`)
-
-- **Triggers**: Push/PR to `main` or `develop`
-- **Purpose**: Continuous integration testing
-- **Scope**: Multi-platform, comprehensive tests
-
-### Main CI (`ci.yml`)
-
-- **Triggers**: Push/PR to `main` or `develop`
-- **Purpose**: Linting, type checking, basic tests
-- **Scope**: Ubuntu only, fast feedback
-
-### Release (`release.yml`)
-
-- **Triggers**: Tag push (v_._._) _*AND__ tag must be on `main` branch
-- **Purpose**: Production release to PyPI
-- **Scope**: Full validation + publication
-
-## Release Checklist
-
-Before creating a release tag:
-
-- [ ] All features merged to `develop`
-- [ ] `develop` merged to `main`
-- [ ] Version updated in `pyproject.toml`
-- [ ] `CHANGELOG.md` updated
-- [ ] All tests passing on `main`
-- [ ] Currently on `main` branch
-- [ ] Local `main` is up to date with remote
-
-Then:
-
-```bash
-git tag vX.Y.Z
-git push origin vX.Y.Z
-```
+The next release is then uploaded. A version that is already tagged is not
+released again. To publish it after the fact, start the *Release* workflow by
+hand (*Actions > Release > Run workflow*) on `main` with its number, for
+example `0.2.0`, in the `publish_version` field: the job downloads the files
+attached to the GitHub release of that version and uploads them to PyPI as
+they are.
 
 ## Hotfixes
 
-For urgent fixes to production:
-
-```bash
-# Create hotfix branch from main
-git checkout main
-git checkout -b hotfix/urgent-fix
-
-# Make minimal fix
-# ... fix, test, commit ...
-
-# Merge to main
-git checkout main
-git merge hotfix/urgent-fix
-
-# Update version (patch)
-poetry version patch
-git add pyproject.toml
-git commit -m "Hotfix: bump version to X.Y.Z"
-
-# Create release
-git tag vX.Y.Z
-git push origin vX.Y.Z
-
-# Merge back to develop
-git checkout develop
-git merge main
-git push origin develop
-```
-
-## Protection Rules (Recommended)
-
-Consider setting up these branch protection rules in GitHub:
-
-### `main` branch:
-
-- Require pull request reviews
-- Require status checks to pass (CI tests)
-- Require up-to-date branches
-- Include administrators in restrictions
-
-### `develop` branch:
-
-- Require status checks to pass (CI tests)
-- Require up-to-date branches
+Branch from `develop`, fix, raise the patch version, and follow the same two
+pull requests (`develop`, then `main`). If `main` must be fixed without what is
+on `develop`, branch from `main`, open the pull request against `main`, and
+merge `main` back into `develop` afterwards.

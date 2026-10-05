@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it and the paper whose systems it implements."
+title: "tfunify: trend-following systems in NumPy"
+type: software
+authors:
+  - family-names: Ribeiro
+    given-names: Diogo
+    orcid: "https://orcid.org/0009-0001-2022-7072"
+    email: dfr@esmad.ipp.pt
+version: 0.2.0
+date-released: "2026-10-05"
+license: MIT
+repository-code: "https://github.com/DiogoRibeiro7/tfunify"
+url: "https://diogoribeiro7.github.io/tfunify/"
+keywords:
+  - trend following
+  - time-series momentum
+  - managed futures
+  - quantitative finance
+references:
+  - type: article
+    title: "The Science and Practice of Trend-Following Systems"
+    authors:
+      - family-names: Sepp
+        given-names: Artur
+      - family-names: Lucic
+        given-names: Vladimir
+    year: 2026
+    identifiers:
+      - type: other
+        value: "arXiv:2607.19497"
+        description: arXiv preprint
+    url: "https://arxiv.org/abs/2607.19497"
