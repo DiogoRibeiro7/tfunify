@@ -1,310 +1,171 @@
-name: Release (manual, workflow creates the tag)
+name: Release
+
+# A release is cut automatically when a commit on main carries a version in
+# pyproject.toml that has no tag yet: the tag, the GitHub release (with the
+# matching CHANGELOG section as notes) and the built distributions are all
+# created here.  To release, bump `version` and add a CHANGELOG section on
+# develop, and merge develop into main.  Nothing is published unless every job
+# of the CI workflow passes on the commit being released.
+#
+# The check runs on every push to main (it takes a few seconds) rather than
+# only when pyproject.toml changes: with a path filter, a release whose run
+# failed could not be retried by the next commit.
+#
+# Started by hand with `publish_version`, the workflow does one other thing: it
+# uploads the files of a version that is already released on GitHub to PyPI.
+# That is for the first release after PyPI publishing is switched on.
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
-      version:
-        description: "Version to release (e.g., 0.1.2). Leave empty to use pyproject version."
+      publish_version:
+        description: >-
+          Leave empty to release the version on main if it has no tag yet. To
+          upload a version that is already released on GitHub to PyPI, give
+          its number (for example 0.2.0).
         required: false
+        default: ""
         type: string
 
 permissions:
-  contents: write   # needed to push tags and create the GitHub Release
+  contents: read
 
 concurrency:
-  group: release
+  # Per ref: a run started by hand from another branch (which does nothing)
+  # must not displace a pending run on main.
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  prep:
-    name: Prepare release (resolve version & target commit)
+  check:
+    name: Is there a new version?
+    # Never from another branch, even when started by hand.
+    if: github.ref == 'refs/heads/main' && inputs.publish_version == ''
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
-      version: ${{ steps.meta.outputs.version }}
-      tag: ${{ steps.meta.outputs.tag }}
-      sha: ${{ steps.meta.outputs.sha }}
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.version.outputs.release }}
     steps:
-      - name: Checkout main (read-only)
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
-          ref: main
           fetch-depth: 0
-
-      - name: Set up Python 3.11 (for tomllib)
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
-
-      - name: Determine version and target commit
-        id: meta
+          python-version: "3.14"
+      - id: version
+        name: Compare the declared version with the existing tags
         run: |
-          set -euo pipefail
-
-          # Resolve the version to release
-          if [ -n "${{ inputs.version }}" ]; then
-            VERSION="${{ inputs.version }}"
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/v$version" > /dev/null; then
+            echo "v$version is already released; nothing to do."
+            echo "release=false" >> "$GITHUB_OUTPUT"
           else
-            python - <<'PY'
-            import sys, tomllib
-            with open("pyproject.toml","rb") as f:
-                data = tomllib.load(f)
-            v = data["tool"]["poetry"]["version"]
-            print(v)
-            PY
-            VERSION="$(python - <<'PY'
-import tomllib, sys
-print(tomllib.load(open("pyproject.toml","rb"))["tool"]["poetry"]["version"])
-PY
-)"
+            echo "v$version has no tag yet; releasing."
+            echo "release=true" >> "$GITHUB_OUTPUT"
           fi
 
-          # Sanity check: simple semver (major.minor.patch)
-          case "$VERSION" in
-            [0-9]*.[0-9]*.[0-9]*) : ;;
-            *) echo "Invalid version '$VERSION'. Use e.g. 0.1.2 or provide 'version' input."; exit 1 ;;
-          esac
+  ci:
+    name: CI
+    needs: check
+    if: needs.check.outputs.release == 'true'
+    uses: ./.github/workflows/ci.yml
 
-          # Record the main tip SHA now; all jobs will use this exact commit
-          SHA="$(git rev-parse HEAD)"
-
-          TAG="v${VERSION}"
-
-          echo "Resolved version: $VERSION"
-          echo "Tag to create   : $TAG"
-          echo "Target commit   : $SHA"
-
-          # Fail early if the tag already exists on the remote
-          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
-            echo "Remote tag $TAG already exists. Choose a new version or delete the tag first."
-            exit 1
-          fi
-
-          {
-            echo "version=$VERSION"
-            echo "tag=$TAG"
-            echo "sha=$SHA"
-          } >> "$GITHUB_OUTPUT"
-
-  test:
-    name: Test suite (matrix)
+  release:
+    name: Build and publish v${{ needs.check.outputs.version }}
+    needs: [check, ci]
+    if: needs.check.outputs.release == 'true'
     runs-on: ubuntu-latest
-    needs: prep
-    strategy:
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+    timeout-minutes: 10
+    permissions:
+      contents: write
     steps:
-      - name: Checkout exact release commit
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
-          ref: ${{ needs.prep.outputs.sha }}
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install Poetry
-        uses: abatilo/actions-poetry@v3
-        with:
-          poetry-version: "1.8.3"
-
-      - name: Install (dev)
+          python-version: "3.14"
+      - name: Build
         run: |
-          set -euo pipefail
-          poetry config virtualenvs.prefer-active-python true
-          poetry env use "$(python -c 'import sys; print(sys.executable)')"
-          poetry install --with dev --no-interaction --no-ansi
-
-      - name: Lint
-        run: |
-          poetry run ruff check .
-          poetry run ruff format --check .
-
-      - name: Type check
-        run: poetry run mypy tfunify
-
-      - name: Unit tests
-        run: poetry run pytest --cov=tfunify --cov-report=term-missing --cov-fail-under=80
-
-  test-cli:
-    name: Test CLI functionality
-    runs-on: ubuntu-latest
-    needs: prep
-    steps:
-      - name: Checkout exact release commit
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prep.outputs.sha }}
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install Poetry
-        uses: abatilo/actions-poetry@v3
-        with:
-          poetry-version: "1.8.3"
-
-      - name: Install
-        run: |
-          set -euo pipefail
-          poetry config virtualenvs.prefer-active-python true
-          poetry env use "$(python -c 'import sys; print(sys.executable)')"
-          poetry install --no-interaction --no-ansi
-
-      - name: Create test data (NumPy inside Poetry venv)
-        run: |
-          poetry run python - <<'PY'
-          import numpy as np, csv
-          np.random.seed(42)
-          n = 200
-          prices = 100 + np.cumsum(0.01 * np.random.randn(n))
-          with open('test_data.csv', 'w', newline='') as f:
-              w = csv.writer(f)
-              w.writerow(['date', 'close'])
-              for i, p in enumerate(prices):
-                  w.writerow([f'2023-{(i%12)+1:02d}-{(i%28)+1:02d}', f'{p:.2f}'])
-          PY
-
-      - name: Run CLI commands
-        run: |
-          poetry run tfu european --csv test_data.csv --span-long 50 --span-short 10
-          poetry run tfu american --csv test_data.csv --span-long 50 --span-short 10 --atr-period 20
-          poetry run tfu tsmom --csv test_data.csv --L 5 --M 8
-
-      - name: Validate artifacts
-        run: |
-          poetry run python - <<'PY'
-          import numpy as np, sys
-          ok = True
-          for system in ['european', 'american', 'tsmom']:
-              try:
-                  data = np.load(f'{system}_results.npz')
-                  print(f'{system}: keys={list(data.keys())}')
-                  assert len(data.files) > 0
-              except Exception as e:
-                  ok = False
-                  print(f'Validation failed for {system}: {e}', file=sys.stderr)
-          if not ok:
-              raise SystemExit(1)
-          print('All CLI tests passed!')
-          PY
-
-  tag:
-    name: Create and push tag
-    runs-on: ubuntu-latest
-    needs: [prep, test, test-cli]
-    steps:
-      - name: Checkout exact release commit
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prep.outputs.sha }}
-          fetch-depth: 0
-          persist-credentials: true   # required to push tags with GITHUB_TOKEN
-
-      - name: Configure git identity
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Create and push tag ${{ needs.prep.outputs.tag }}
-        run: |
-          set -euo pipefail
-          TAG="${{ needs.prep.outputs.tag }}"
-          SHA="${{ needs.prep.outputs.sha }}"
-          # Double-check tag doesn't exist remotely
-          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
-            echo "Remote tag $TAG already exists. Aborting."
-            exit 1
-          fi
-          # Create annotated tag at the exact SHA captured in prep
-          git tag -a "$TAG" -m "Release $TAG" "$SHA"
-          git push origin "refs/tags/$TAG"
-
-  build-publish:
-    name: Build, publish to PyPI, and create GitHub Release
-    runs-on: ubuntu-latest
-    needs: [prep, tag]
-    steps:
-      - name: Checkout exact release commit
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prep.outputs.sha }}
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install Poetry
-        uses: abatilo/actions-poetry@v3
-        with:
-          poetry-version: "1.8.3"
-
-      - name: Verify pyproject version matches ${{ needs.prep.outputs.version }}
-        run: |
-          set -euo pipefail
-          PYPROJECT_VERSION="$(python - <<'PY'
-          import tomllib
-          print(tomllib.load(open("pyproject.toml","rb"))["tool"]["poetry"]["version"])
-          PY
-          )"
-          if [ "$PYPROJECT_VERSION" != "${{ needs.prep.outputs.version }}" ]; then
-            echo "pyproject version ($PYPROJECT_VERSION) != planned release (${{ needs.prep.outputs.version }})"
-            exit 1
-          fi
-          echo "Version verification passed."
-
-      - name: Build package
-        run: |
-          set -euo pipefail
-          poetry install --no-root --no-interaction --no-ansi
-          poetry build
-          ls -la dist/
-
-      - name: Smoke test wheel install
-        run: |
-          set -euo pipefail
-          python -m venv test_env
-          source test_env/bin/activate
-          pip install --upgrade pip
-          pip install dist/*.whl
-          python - <<'PY'
-          import tfunify, numpy as np
-          from tfunify.european import EuropeanTF, EuropeanTFConfig
-          print(f'tfunify version: {tfunify.__version__}')
-          np.random.seed(42)
-          prices = 100 * np.cumprod(1 + 0.01 * np.random.randn(100))
-          pnl, *_ = EuropeanTF(EuropeanTFConfig(span_long=20, span_short=5)).run_from_prices(prices)
-          print(f'Test run successful, PnL shape: {pnl.shape}')
-          PY
-          deactivate
-
-      - name: Publish to PyPI
+          python -m pip install build twine
+          python -m build
+          twine check --strict dist/*
+      - name: Extract the release notes from the changelog
         env:
-          POETRY_PYPI_TOKEN_PYPI: ${{ secrets.PYPI_API_TOKEN }}
-        run: poetry publish --username __token__ --password "$POETRY_PYPI_TOKEN_PYPI"
-
-      - name: Create GitHub Release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: python tools/release_notes.py "$VERSION" > release-notes.md
+      # Before the release is created: if this upload fails, nothing has been
+      # published and the run can simply be started again.
+      - uses: actions/upload-artifact@v7
         with:
-          tag_name: ${{ needs.prep.outputs.tag }}
-          release_name: Release ${{ needs.prep.outputs.tag }}
-          body: |
-            ## Changes in this release
+          name: dist
+          path: dist/
+          if-no-files-found: error
+      - name: Create the tag and the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          # `gh release create` saves a draft, uploads the files and then
+          # publishes, which is what creates the tag. A run that was stopped in
+          # between leaves a draft and no tag, so the next run arrives here.
+          if draft=$(gh release view "v$VERSION" --json isDraft --jq .isDraft 2> /dev/null); then
+            if [ "$draft" = "true" ]; then
+              echo "Removing the draft left by an interrupted run."
+              gh release delete "v$VERSION" --yes
+            else
+              echo "v$VERSION is published already (this job is being re-run): completing its files."
+              gh release upload "v$VERSION" dist/* --clobber
+              exit 0
+            fi
+          fi
+          gh release create "v$VERSION" dist/* \
+            --target "$GITHUB_SHA" \
+            --title "v$VERSION" \
+            --notes-file release-notes.md
 
-            See [CHANGELOG.md](CHANGELOG.md).
+  pypi:
+    name: Publish to PyPI
+    needs: [check, release]
+    # Opt-in: set the repository variable PUBLISH_TO_PYPI to "true" and
+    # register this workflow as a trusted publisher on PyPI (no token needed).
+    if: vars.PUBLISH_TO_PYPI == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          skip-existing: true # a repeated run does not fail on files already there
 
-            ## Installation
-            ```bash
-            pip install tfunify==${{ needs.prep.outputs.version }}
-            ```
-
-            ## Verified
-            - Python 3.10, 3.11, 3.12
-            - Unit + CLI tests passed
-          draft: false
-          prerelease: false
+  publish-existing:
+    name: Publish an existing release to PyPI
+    # By hand only, and from main: the files are those attached to the GitHub
+    # release of that version, exactly as they were built and tested then.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_version != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download the files of the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.publish_version }}
+        run: |
+          gh release download "v${VERSION#v}" --repo "$GITHUB_REPOSITORY" \
+            --dir dist --pattern "*.whl" --pattern "*.tar.gz"
+          ls -l dist
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          skip-existing: true

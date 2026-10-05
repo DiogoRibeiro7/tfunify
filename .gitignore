@@ -13,6 +13,7 @@ dist/
 
 # Coverage / reports
 .htmlcov/
+htmlcov/
 .coverage*
 
 # IDE
@@ -25,3 +26,17 @@ dist/
 examples/data/
 examples/*.png
 examples/*.npz
+
+# Documentation build
+site/
+
+# Results written by the command line
+*_results.npz
+
+# Tools
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+coverage.xml
+test-results.xml
+build/
